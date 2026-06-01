@@ -159,6 +159,8 @@ class UI(
                 'SENSOR_DISTANCE': self.state.sim.SENSOR_DISTANCE,
                 'TRAIL_PERSISTENCE': self.state.sim.TRAIL_PERSISTENCE,
                 'TRAIL_DIFFUSION': self.state.sim.TRAIL_DIFFUSION,
+                'ADVECTION': self.state.sim.ADVECTION,
+                'ADAPTIVE_SENSING': self.state.sim.ADAPTIVE_SENSING,
             },
             source_filename=None
         )
@@ -566,6 +568,8 @@ class UI(
                 'SENSOR_DISTANCE': self.state.sim.SENSOR_DISTANCE,
                 'TRAIL_PERSISTENCE': self.state.sim.TRAIL_PERSISTENCE,
                 'TRAIL_DIFFUSION': self.state.sim.TRAIL_DIFFUSION,
+                'ADVECTION': self.state.sim.ADVECTION,
+                'ADAPTIVE_SENSING': self.state.sim.ADAPTIVE_SENSING,
             },
             source_filename=filename
         )

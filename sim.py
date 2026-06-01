@@ -209,6 +209,9 @@ class Sim:
         tryset(self.entity_update_program, 'RESET_MODE', self._state.initial_conditions)
         tryset(self.entity_update_program, 'COHORTS', self._state.num_cohorts)
         self._assign_physics_setting('HAZARD_RATE_SETTING', self._state.HAZARD_RATE, 'Hazard Rate', 'HAZARD_RATE', 0.0, 0.05)
+        # Adaptive Sensing (particle memory -> sensing reach). Global in both normal and multi-load modes.
+        self._assign_physics_setting('ADAPTIVE_SENSING_SETTING', self._state.ADAPTIVE_SENSING, 'Adaptive Sensing', 'ADAPTIVE_SENSING', 0.0, 3.0)
+        tryset(self.entity_update_program, 'MEMORY_PERSISTENCE', self._state.MEMORY_PERSISTENCE)
 
         # Appearance settings from sim state (now part of physics config)
         tryset(self.entity_update_program, 'HUE_SENSITIVITY', self._state.hue_sensitivity)
@@ -285,6 +288,21 @@ class Sim:
             tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.cohort_sweep', 0.0)
         # Always apply jitter (independent of parameter_sweeps_enabled)
         tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.jitter', self._state.jitters.get('TRAIL_DIFFUSION', 0.0))
+
+        # Assign ADVECTION as a PhysicsSetting struct (mirrors TRAIL_DIFFUSION above)
+        min_val, max_val = self._get_slider_range('Advection', 0.0, 5.0)
+        tryset(self.canvas_update_program, 'ADVECTION_SETTING.slider_value', self._state.ADVECTION)
+        tryset(self.canvas_update_program, 'ADVECTION_SETTING.min_value', min_val)
+        tryset(self.canvas_update_program, 'ADVECTION_SETTING.max_value', max_val)
+        if self._state.parameter_sweeps_enabled and not (multi_load_service and multi_load_service.is_active()):
+            tryset(self.canvas_update_program, 'ADVECTION_SETTING.x_sweep', self._state.x_sweeps.get('ADVECTION', 0.0))
+            tryset(self.canvas_update_program, 'ADVECTION_SETTING.y_sweep', self._state.y_sweeps.get('ADVECTION', 0.0))
+            tryset(self.canvas_update_program, 'ADVECTION_SETTING.cohort_sweep', self._state.cohort_sweeps.get('ADVECTION', 0.0))
+        else:
+            tryset(self.canvas_update_program, 'ADVECTION_SETTING.x_sweep', 0.0)
+            tryset(self.canvas_update_program, 'ADVECTION_SETTING.y_sweep', 0.0)
+            tryset(self.canvas_update_program, 'ADVECTION_SETTING.cohort_sweep', 0.0)
+        tryset(self.canvas_update_program, 'ADVECTION_SETTING.jitter', self._state.jitters.get('ADVECTION', 0.0))
 
         tryset(self.canvas_update_program, 'can_tex', 1)
         tryset(self.canvas_update_program, 'brush_tex', 3)

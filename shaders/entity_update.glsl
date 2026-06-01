@@ -49,6 +49,8 @@ uniform PhysicsSetting LATERAL_FORCE_SETTING;
 uniform PhysicsSetting SENSOR_GAIN_SETTING;
 uniform PhysicsSetting MUTATION_SCALE_SETTING;
 uniform PhysicsSetting HAZARD_RATE_SETTING;
+uniform PhysicsSetting ADAPTIVE_SENSING_SETTING; // memory->sensing coupling gain (0 = off)
+uniform float MEMORY_PERSISTENCE;                // leaky-integrator retention for the memory above
 uniform float HUE_SENSITIVITY;
 uniform bool COLOR_BY_COHORT;
 uniform bool DISABLE_SYMMETRY;
@@ -487,8 +489,19 @@ void main() {
 
 
 
+    //Adaptive Sensing memory: e.padding[0] holds a per-particle leaky integrator of trail
+    //exposure at the particle's own position. Exposure is the flow magnitude in the canvas
+    //(a rotation/chiral-invariant scalar), scaled into the same units the brain's sensors see
+    //so the coupling gain is O(1). Accumulated memory scales sensing reach: over-exposed
+    //particles desensitize/contract and resensitize as they move on. It scales the
+    //chiral/rotation-invariant sensor distance only, never the turn, so symmetry is preserved.
+    //ADAPTIVE_SENSING == 0 -> mem_factor == 1, i.e. exact original behavior.
+    float exposure = length(get_can(e.pos).xy) * (SQRT_WORLD_SIZE*38.855*calculate_setting(get_particle_sensor_gain(),e.pos,cohort));
+    e.padding[0] = e.padding[0]*MEMORY_PERSISTENCE + (1.-MEMORY_PERSISTENCE)*exposure;
+    float mem_factor = exp(-calculate_setting(ADAPTIVE_SENSING_SETTING,e.pos,cohort) * e.padding[0]);
+
     //Calculate position offsets for the two sensors.
-    float sample_dist = 1./SQRT_WORLD_SIZE*.005 * calculate_setting(get_particle_sensor_distance(),e.pos,cohort);
+    float sample_dist = 1./SQRT_WORLD_SIZE*.005 * calculate_setting(get_particle_sensor_distance(),e.pos,cohort) * mem_factor;
     
     //variable sample distance?
     //sample_dist *= (get_can(e.pos).z*10);

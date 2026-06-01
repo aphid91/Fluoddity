@@ -19,6 +19,9 @@ class SimState:
     SENSOR_DISTANCE: float = 1.0
     TRAIL_PERSISTENCE: float = 0.938
     TRAIL_DIFFUSION: float = 1.0
+    ADVECTION: float = 0.0          # semi-Lagrangian advection of the trail field (0 = off)
+    ADAPTIVE_SENSING: float = 0.0   # memory->sensing coupling gain (0 = off)
+    MEMORY_PERSISTENCE: float = 0.95  # leaky-integrator retention for Adaptive Sensing (fixed; not a slider)
     HAZARD_RATE: float = 0.0
 
     # Extra options

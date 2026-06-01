@@ -45,6 +45,7 @@ struct PhysicsSetting {
 
 uniform PhysicsSetting TRAIL_PERSISTENCE_SETTING;
 uniform PhysicsSetting TRAIL_DIFFUSION_SETTING;
+uniform PhysicsSetting ADVECTION_SETTING;
 
 uniform int frame_count;
 
@@ -177,13 +178,25 @@ void main() {
     vec2 entity_space_pos = (texcoord * 2.0 - 1.0) * vec2(sqrt(_ca), 1.0/sqrt(_ca));
     float TRAIL_DIFFUSION = calculate_setting(TRAIL_DIFFUSION_SETTING,entity_space_pos,0);
     TRAIL_DIFFUSION = clamp(TRAIL_DIFFUSION,0.001,1.0);//keeps jitter from exceeding the valid domain
+
+    // Advection: can_tex.xy stores the local flow (net particle current). Trace one step
+    // BACKWARD along that flow and read the trail field upstream (semi-Lagrangian advection);
+    // sampling upstream carries the field downstream, so trails drift along their own current
+    // instead of only diffusing isotropically. Backward/upwind sampling is the stable choice.
+    // ADVECTION == 0 -> sample_uv == texcoord, i.e. the original behavior.
+    float ADVECTION = calculate_setting(ADVECTION_SETTING, entity_space_pos, 0.0);
+    vec2 sample_uv = texcoord;
+    if(ADVECTION != 0.0){
+        sample_uv = texcoord - ADVECTION * getCan(texcoord, can_tex).xy;
+    }
+
     if(TRAIL_DIFFUSION>0){
         TRAIL_DIFFUSION= TRAIL_DIFFUSION*TRAIL_DIFFUSION;//better scaling for slider
         TRAIL_DIFFUSION = 4/(pow(5,(TRAIL_DIFFUSION))-1);//better scaling for slider
-        can_color = getBlur(texcoord, can_tex,TRAIL_DIFFUSION);
+        can_color = getBlur(sample_uv, can_tex,TRAIL_DIFFUSION);
     }
     else{
-        can_color = texture(can_tex,texcoord);
+        can_color = getCan(sample_uv, can_tex);
     }
 
     // Use entity space position for position-based sweeps

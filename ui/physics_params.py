@@ -109,6 +109,16 @@ PHYSICS_PARAMS: list[PhysicsParamDef] = [
         description="Controls how quickly particle trails spread out and blend together.",
     ),
     PhysicsParamDef(
+        name='ADVECTION', label='Advection', group='advanced',
+        default_min=0.0, default_max=5.0,
+        description="Advects the trail field along its own stored flow (semi-Lagrangian). Before diffusion/fade, the canvas is sampled one step upstream of the local current in canvas.xy, so trails drift along their own flow instead of only diffusing isotropically. 0 = off. (Negative values, reachable by widening the range, run it backward / sharpen against the flow.)",
+    ),
+    PhysicsParamDef(
+        name='ADAPTIVE_SENSING', label='Adaptive Sensing', group='advanced',
+        default_min=0.0, default_max=3.0,
+        description="Gives each particle a memory of recent trail exposure that modulates its sensing reach: particles that have been sitting in dense trail desensitize/contract and resensitize as they move on, producing breathing/wave dynamics. Scales the (symmetry-preserving) sensor distance only, never the turn. 0 = off.",
+    ),
+    PhysicsParamDef(
         name='HAZARD_RATE', label='Hazard Rate', group='advanced',
         default_min=0.0, default_max=0.05,
         hard_min=0.0, hard_max=0.05,
