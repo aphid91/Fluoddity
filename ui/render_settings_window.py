@@ -159,15 +159,15 @@ class RenderSettingsWindowMixin:
         if self._persisted_header("Camera", "render_group_camera"):
             cam = self.state.camera
             _, cam.fov = imgui.slider_float(
-                "FOV", cam.fov, 10.0, 120.0, format="%.0f deg")
+                "FOV", cam.fov, 10.0, 95.0, format="%.0f deg")
             _, cam.aperture = imgui.slider_float(
-                "Aperture", cam.aperture, 0.0, 0.2, format="%.3f")
+                "Aperture", cam.aperture, 0.0, 0.15, format="%.3f")
             _, cam.focal_plane_depth = imgui.slider_float(
-                "Focal Depth", cam.focal_plane_depth, 0.1, 50.0, format="%.1f")
+                "Focal Depth", cam.focal_plane_depth, 0.1, 10.0, format="%.1f")
             _, cam.move_speed = imgui.slider_float(
-                "Move Speed", cam.move_speed, 0.1, 10.0, format="%.1f")
+                "Move Speed", cam.move_speed, 0.1, 5.0, format="%.1f")
             _, cam.rotate_speed = imgui.slider_float(
-                "Rotate Speed", cam.rotate_speed, 0.1, 10.0, format="%.1f")
+                "Rotate Speed", cam.rotate_speed, 0.1, 5.0, format="%.1f")
             changed, values = imgui.drag_float3(
                 "Orbit Center", list(cam.orbit_center), 0.01, format="%.2f")
             if changed:
@@ -175,7 +175,7 @@ class RenderSettingsWindowMixin:
                 if self.tracer_controller_cam is not None:
                     sync_orbit_angles_from_camera(cam, self.tracer_controller_cam)
             _, cam.orbit_rate = imgui.slider_float(
-                "Orbit Rate", cam.orbit_rate, -0.05, 0.05, format="%.4f")
+                "Orbit Rate", cam.orbit_rate, -0.02, 0.02, format="%.4f")
 
             imgui.separator()
             _, cam.stereogram = imgui.checkbox("Stereogram", cam.stereogram)
@@ -269,7 +269,7 @@ class RenderSettingsWindowMixin:
 
         # ---- Capture SPP + Re-render Preview (shared) ----
         r = p.rendering
-        _, r.capture_spp = imgui.slider_int("Capture SPP", r.capture_spp, 1, 512)
+        _, r.capture_spp = imgui.slider_int("Capture SPP", r.capture_spp, 1, 128)
         rt_active = r.rt_mode > 0
         if rt_active:
             imgui.begin_disabled()
