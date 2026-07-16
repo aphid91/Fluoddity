@@ -1,0 +1,532 @@
+{
+  "$description": "Enumeration of every interactive ImGui control in: Physics Settings, Preferences, Render Settings, Config Clipboard, Radio, Screen Recording Controls, and the Main Menu Bar. For each control: whether it has a tooltip, the tooltip text, and the file/line where it's defined.",
+  "outOfScope": ["Plotting", "Generics", "Scheduled Renders", "Guide/Controls/Performance help windows", "any other window not listed"],
+  "howToRead": {
+    "location": "Points to the imgui.* widget call itself. For physics sliders, the tooltip text actually lives in ui/physics_params.py (the 'description' field of the parameter definition), not inline at the widget call — see sharedHelpers.",
+    "tooltipKinds": {
+      "delayed": "Uses _delayed_tooltip (ui/core.py:625) — only fires after the mouse hovers AND stays still (HoveredFlags_.delay_normal | HoveredFlags_.stationary). Used almost everywhere except Render Settings.",
+      "immediate": "Plain `if imgui.is_item_hovered(): imgui.set_tooltip(...)` — fires as soon as the mouse enters the item. Used throughout ui/render_settings_window.py.",
+      "custom": "Physics-slider-only mechanism: not a real ImGui tooltip. render_custom_tooltip() records the hovered slider's label/description, consumed once per frame by a persistent companion window (render_physics_tooltip) docked to the Physics Settings window's right edge, showing an animated shader graphic + wrapped description text. Only active for sliders with a shader mode in PARAM_BY_LABEL.",
+      "perOption": "A combo/radio-group where each option/selectable has its own separate tooltip, listed as an object of option->text."
+    }
+  },
+  "docNotes": [
+    "ui/README.md is stale: it references a history_window.py/HistoryWindowMixin that no longer exists; that code is now split into ui/config_clipboard_window.py and ui/physics_tooltip.py. It also omits radio_window.py, render_settings_window.py, scheduled_renders_window.py, and generics_window.py."
+  ],
+  "sharedHelpers": [
+    {
+      "name": "slider_float_with_range_menu(...)",
+      "location": "ui/slider_widgets.py:24",
+      "purpose": "Wraps imgui.slider_float with jitter tint, right-click range/reset menu, alt-click lock.",
+      "tooltipSource": "Does not show the parameter's description itself — only a fixed jitter-explainer tooltip when jitter is active. The caller (render_physics_slider) separately calls render_custom_tooltip(pdef.label, pdef.description)."
+    },
+    {
+      "name": "add_slider_context_menu(...)",
+      "location": "ui/slider_widgets.py:99",
+      "purpose": "Right-click popup: Jitter slider, Min/Max fields, Reset Range, Reset Value buttons.",
+      "tooltipSource": "Jitter slider has its own _delayed_tooltip at ui/slider_widgets.py:146. Other popup items have none."
+    },
+    {
+      "name": "render_sweep_buttons(param_name)",
+      "location": "ui/slider_widgets.py:226",
+      "purpose": "X/Y/C sweep-toggle buttons next to a slider (shown only when Parameter Sweeps enabled).",
+      "tooltipSource": "None on any of the three buttons."
+    },
+    {
+      "name": "render_range_adjust_buttons(...)",
+      "location": "ui/slider_widgets.py:357",
+      "purpose": "Widen (^) / narrow (v) buttons that rescale a slider's range.",
+      "tooltipSource": "One shared _delayed_tooltip at ui/slider_widgets.py:388 covering both buttons as a group."
+    },
+    {
+      "name": "render_physics_slider(pdef)",
+      "location": "ui/slider_widgets.py:390",
+      "purpose": "Top-level renderer used by physics_window.py for every Basics/Forces/Advanced slider; wires together lock, sweep buttons, range buttons, the slider, and the description tooltip.",
+      "tooltipSource": "Passes pdef.label / pdef.description (from ui/physics_params.py) to render_custom_tooltip at ui/slider_widgets.py:447."
+    },
+    {
+      "name": "render_custom_tooltip(label, description)",
+      "location": "ui/physics_tooltip.py:97",
+      "purpose": "Not a real ImGui tooltip — records the hovered slider/description for the physics tooltip companion window.",
+      "tooltipSource": "Text = whatever description the caller passes (for physics sliders, pdef.description)."
+    },
+    {
+      "name": "render_physics_tooltip()",
+      "location": "ui/physics_tooltip.py:113",
+      "purpose": "Draws a custom borderless companion window (animated shader graphic + imgui.text_wrapped(description)) docked to the Physics Settings window's right edge. Only activates for the ~12 sliders with a shader mode in PARAM_BY_LABEL (ui/physics_tooltip.py:79-89), e.g. Global Force Mult, Strafe Power, Mutation Scale, Drag, Axial/Lateral Force.",
+      "tooltipSource": null
+    },
+    {
+      "name": "_delayed_tooltip(text)",
+      "location": "ui/core.py:625",
+      "purpose": "Standard hover-and-hold tooltip used almost everywhere outside Render Settings. Only shows if hover is stationary.",
+      "tooltipSource": "Text passed directly by the call site."
+    },
+    {
+      "name": "inline is_item_hovered()/set_tooltip()",
+      "location": "throughout ui/render_settings_window.py",
+      "purpose": "Render Settings' own idiom — fires immediately on hover, no delay/stationary gate.",
+      "tooltipSource": "Literal string at the call site."
+    },
+    {
+      "name": "lock_widget(pls, param_name, base_label, ...)",
+      "location": "parameter_locks/widgets.py:41",
+      "purpose": "Context manager wrapping lockable widgets (red style + alt-click toggle). Not a tooltip mechanism itself.",
+      "tooltipSource": null
+    },
+    {
+      "name": "lock_begin_combo(pls, param_name, opened)",
+      "location": "parameter_locks/widgets.py:73",
+      "purpose": "Alt-click handling for begin_combo-style widgets.",
+      "tooltipSource": null
+    },
+    {
+      "name": "_persisted_header(label, pref_field)",
+      "location": "ui/render_settings_window.py:24",
+      "purpose": "Collapsing-header wrapper that persists open/closed state to preferences instead of imgui's .ini.",
+      "tooltipSource": null
+    }
+  ],
+  "windows": [
+    {
+      "id": "physics_settings",
+      "title": "Physics Settings",
+      "entryPoint": "ui/physics_window.py:13",
+      "sections": [
+        {
+          "name": "top (always visible)",
+          "controls": [
+            { "control": "Appearance (menu)", "type": "begin_menu", "tooltip": false, "location": "ui/physics_window.py:221" },
+            { "control": "Color by Cohort", "type": "checkbox", "tooltip": true, "tooltipKind": "delayed", "tooltipText": "Colors particles based on their cohort assignment\nrather than their behavior.", "location": "ui/physics_window.py:231-235" },
+            { "control": "Hue Sensitivity", "note": "shown only if not Color by Cohort", "type": "slider_float", "tooltip": true, "tooltipKind": "delayed", "tooltipText": "Controls color variation based on particle velocity.", "location": "ui/physics_window.py:239-243" },
+            { "control": "Mutation Seed: #XXXX", "note": "alt-clickable text, not a real widget", "type": "text/lock_target", "tooltip": false, "location": "ui/physics_window.py:22-32" }
+          ]
+        },
+        {
+          "name": "Basics",
+          "headerControl": { "control": "Basics", "type": "collapsing_header", "tooltip": false, "location": "ui/physics_window.py:37" },
+          "controls": [
+            { "control": "Sensor Gain", "type": "slider", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Determines how strongly particles respond to sensor input. Higher values make particles more reactive to the trails they sense on the Canvas.", "location": "ui/physics_params.py:47-51" },
+            { "control": "Sensor Angle", "type": "slider", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Sets the angular offset of particle sensors from their forward direction. Determines whether particles are 'looking ahead' or 'looking behind'.", "location": "ui/physics_params.py:52-57" },
+            { "control": "Sensor Distance", "type": "slider", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Determines distance between a particle's center and where it reads the trail information from Canvas. Longer distances tend to create larger scale patterns.", "location": "ui/physics_params.py:58-62" },
+            { "control": "Mutation Scale", "type": "slider", "note": "hide_jitter", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Controls the size of the random mutations applied to a rule when a new particle is clicked. At 0, every particle will behave exactly like the selected particle.", "location": "ui/physics_params.py:63-68" }
+          ]
+        },
+        {
+          "name": "Forces",
+          "headerControl": { "control": "Forces", "type": "collapsing_header", "tooltip": false, "location": "ui/physics_window.py:46" },
+          "controls": [
+            { "control": "Global Force Mult", "type": "slider", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Scales axial and lateral forces applied to particles, and scales strafe power. Often tuned in the opposite direction to Sensor Gain and Drag to offset exploding/vanishing particle speed.", "location": "ui/physics_params.py:71-75" },
+            { "control": "Drag", "type": "slider (-1..1)", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Each physics update, particle velocity is multiplied by drag like so:   vel = vel*drag + forces; So drag less than 1 means particles are being slowed down. Powerful (<0.5) drag values can prevent energetic systems from 'blowing up'", "location": "ui/physics_params.py:76-81" }
+          ]
+        },
+        {
+          "name": "Advanced",
+          "headerControl": { "control": "Advanced", "type": "collapsing_header", "tooltip": false, "location": "ui/physics_window.py:55" },
+          "controls": [
+            { "control": "Axial Force", "type": "slider", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Controls the strength of forces applied parallel to the direction of travel: acceleration and braking", "location": "ui/physics_params.py:84-88" },
+            { "control": "Lateral Force", "type": "slider", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Controls the strength of forces applied perpendicular to the direction of travel: turning left and right.", "location": "ui/physics_params.py:89-93" },
+            { "control": "Strafe Power", "type": "slider", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Controls particle movement without applying forces to velocity. 'Strafe' is a vector added directly to position each frame, like a little hop. Strafe power scales with Axial, Lateral, and Global force multipliers.", "location": "ui/physics_params.py:94-98" },
+            { "control": "Trail Persistence", "type": "slider (0..1)", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Controls how long particle trails remain visible. Higher values create longer-lasting trails, lower values make trails fade quickly. Values close to 1.0 tend to create 'sharper' more stable patterns. ", "location": "ui/physics_params.py:99-104" },
+            { "control": "Trail Diffusion", "type": "slider (0..1)", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Controls how quickly particle trails spread out and blend together.", "location": "ui/physics_params.py:105-110" },
+            { "control": "Hazard Rate", "type": "slider (power-scaled, exponent 3.0, hide_jitter)", "tooltip": true, "tooltipKind": "custom", "tooltipText": "Probability per frame that particles reset to initial conditions. Gives particles a probabalistic 'lifetime' after which they reset.", "location": "ui/physics_params.py:111-118" }
+          ]
+        },
+        {
+          "name": "Additional Settings",
+          "headerControl": { "control": "Additional Settings", "type": "collapsing_header", "tooltip": false, "location": "ui/physics_window.py:64" },
+          "controls": [
+            {
+              "control": "Boundary Conditions",
+              "type": "begin_combo",
+              "tooltip": true,
+              "tooltipKind": "perOption",
+              "tooltipText": {
+                "Bounce": "Particles bounce off the edges of the canvas",
+                "Reset": "Particles are reset to their initial conditions when leaving the canvas",
+                "Wrap": "Particles wrap seamlessly to the other side of the canvas"
+              },
+              "location": "ui/physics_window.py:69-86"
+            },
+            {
+              "control": "Initial Conditions",
+              "type": "begin_combo",
+              "tooltip": true,
+              "tooltipKind": "perOption",
+              "tooltipText": {
+                "Flat Grid": "Particles start in a flat grid on the floor plane, organized by cohort",
+                "Random": "Particles are spread uniformly across the canvas",
+                "Ring": "Particles start distributed around a circle, organized by cohort",
+                "3d Grid": "Particles start in a 3D grid filling the volume, organized by cohort"
+              },
+              "location": "ui/physics_window.py:91-109"
+            },
+            { "control": "Initialization Spacing", "type": "slider_float", "tooltip": true, "tooltipText": "Scales the initial spacing between cohorts.\nGrid modes: shrinks the gaps between globs (glob size unchanged);\nat 0 all globs spawn stacked at the center.\nRing / Random: multiplies the overall spawn size.", "location": "ui/physics_window.py:112-117" },
+            { "control": "Number of Cohorts", "type": "slider_int (1-144)", "tooltip": true, "tooltipText": "Each particle is assigned to a cohort. Each cohort shares behavior:\neach cohort has a distinct mutation.", "location": "ui/physics_window.py:120-125" },
+            { "control": "Gravity Force", "type": "slider_float (-1..1)", "tooltip": true, "tooltipText": "Gravity-like force applied to particles.\nLogarithmic: force grows ~10x per quarter of slider travel,\nwith a dead-zone at center.", "location": "ui/physics_window.py:132-136" },
+            { "control": "Gravity Strafe", "type": "slider_float (-1..1)", "tooltip": true, "tooltipText": "Gravity-like strafe (direct position offset) applied to particles.\nLogarithmic: strafe grows ~10x per quarter of slider travel,\nwith a dead-zone at center.", "location": "ui/physics_window.py:139-143" },
+            { "control": "Disable Symmetry", "type": "checkbox", "tooltip": true, "tooltipText": "Allow particles to display \"right / left handed\" behavior,\nleading to clockwise/counterclockwise bias.\nTurn it on to see why we go through trouble\nof calculating \"mirror world\" behavior in entity_update.glsl", "location": "ui/physics_window.py:148-152" },
+            { "control": "Absolute Orientation", "type": "combo (Off / Y axis / Radial)", "tooltip": true, "tooltipText": "What direction are particles 'facing'? Which way is 'up'?\nOff: use particle velocity\nY axis: align to y axis\nRadial: align to center of canvas", "location": "ui/physics_window.py:155-160" },
+            { "control": "Orientation Mix", "note": "only if Absolute Orientation != Off", "type": "slider_float (0..1)", "tooltip": true, "tooltipText": "Blend factor for orientation calculations (0.0 = velocity only, 1.0 = full absolute orientation)", "location": "ui/physics_window.py:163-169" },
+            { "control": "Parameter Sweeps", "type": "checkbox", "tooltip": true, "tooltipText": "Enable parameter sweeps to vary physics across the canvas.\nPress {sweep_key} to toggle. See Help -> Parameter Sweeps for details. (dynamic key name)", "location": "ui/physics_window.py:174-179" }
+          ]
+        },
+        {
+          "name": "Notes",
+          "headerControl": { "control": "Notes", "type": "collapsing_header", "tooltip": false, "location": "ui/physics_window.py:183" },
+          "controls": [
+            { "control": "Notes text field", "type": "input_text_multiline", "tooltip": true, "tooltipText": "Optional notes to save with this config.\nThese will be saved when you save the config.\nEnter to finish editing, Ctrl+Enter for newline.", "location": "ui/physics_window.py:187-196" }
+          ]
+        },
+        {
+          "name": "Per-slider extras",
+          "note": "Basics/Forces/Advanced sliders only, via render_physics_slider",
+          "controls": [
+            { "control": "X / Y / C sweep buttons", "note": "shown when Parameter Sweeps enabled", "type": "button x3", "tooltip": false, "location": "ui/slider_widgets.py:255,281,307" },
+            { "control": "Widen (^) / Narrow (v) range buttons", "type": "button x2", "tooltip": true, "tooltipKind": "delayed (one tooltip for the pair)", "tooltipText": "Up arrow widens slider range. Down arrow narrows range", "location": "ui/slider_widgets.py:378,382,388" }
+          ]
+        },
+        {
+          "name": "Right-click context menu",
+          "note": "every Basics/Forces/Advanced slider, via add_slider_context_menu",
+          "controls": [
+            { "control": "Jitter slider", "type": "slider_float (0-2)", "tooltip": true, "tooltipKind": "delayed", "tooltipText": "Adds random jitter to this setting per-particle per-frame.\nOften results in a softer, fuzzier look.", "location": "ui/slider_widgets.py:142-146" },
+            { "control": "Min", "type": "input_float", "tooltip": false, "location": "ui/slider_widgets.py:153" },
+            { "control": "Max", "type": "input_float", "tooltip": false, "location": "ui/slider_widgets.py:154" },
+            { "control": "Reset Range to Default", "type": "button", "tooltip": false, "location": "ui/slider_widgets.py:166" },
+            { "control": "Reset value to '<file>' / Reset value to defaults", "type": "button", "tooltip": false, "location": "ui/slider_widgets.py:179" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "preferences",
+      "title": "Preferences",
+      "entryPoint": "ui/preferences_window.py:18",
+      "sections": [
+        {
+          "name": "top",
+          "controls": [
+            { "control": "Particle Count", "type": "input_int (commits on Enter)", "tooltip": true, "tooltipText": "Number of active particles. Takes effect on Enter.\nMore particles = more VRAM (32 bytes each).", "location": "ui/preferences_window.py:25-36" },
+            { "control": "Canvas Resolution", "type": "input_int", "tooltip": true, "tooltipText": "Cubic canvas dimension (W=H=D) for 3D trail textures.\nTakes effect on Enter. 6 textures at dim^3 * 4 bytes each.", "location": "ui/preferences_window.py:39-50" },
+            { "control": "Rate", "note": "disabled/locked while recording", "type": "slider_int (1-30, or 1-6 while recording)", "tooltip": true, "tooltipText": "EXPENSIVE- Multiple physics steps can be calculated each\nrender frame and blended together for faster physics.\nMotion blur can be costly for high frequencies,\ntry turning it off if things feel sluggish.", "location": "ui/preferences_window.py:70-91" },
+            { "control": "Motion Blur", "note": "disabled during recording", "type": "checkbox", "tooltip": true, "tooltipText": "Same text as Rate (above)", "location": "ui/preferences_window.py:97-101" },
+            { "control": "Blur Quality", "note": "shown only if Motion Blur enabled", "type": "slider_int (1-20)", "tooltip": true, "tooltipText": "Motion Blur can be expensive at high frequencies,\nskip some frames to improve performance", "location": "ui/preferences_window.py:116-122" },
+            { "control": "Physics Tooltips", "type": "checkbox", "tooltip": true, "tooltipText": "Enable verbose tooltip and vector diagram for physics sliders.", "location": "ui/preferences_window.py:140-144" }
+          ]
+        }
+      ],
+      "notes": [
+        "A 'Mouse Mode' combo exists in source (ui/preferences_window.py:130-136) but is commented out / inactive — not a live control.",
+        "Every real control in this window has a tooltip — the only window with 100% coverage."
+      ]
+    },
+    {
+      "id": "render_settings",
+      "title": "Render settings",
+      "entryPoint": "ui/render_settings_window.py:40",
+      "note": "Tooltips here consistently use the immediate is_item_hovered()+set_tooltip() idiom rather than _delayed_tooltip.",
+      "sections": [
+        {
+          "name": "top-level (always shown)",
+          "controls": [
+            { "control": "Renderer (OpenGL / Optix)", "type": "combo", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "OpenGL: GL points (Pathtrace Off) or the volumetric path tracer.\nOptix: the RTX path tracer (rasterize / path-trace modes).\nRequires an NVIDIA RTX GPU with OptiX/CUDA installed for Optix.", "location": "ui/render_settings_window.py:69-76" },
+            { "control": "Brightness", "type": "slider_float (0.01-2.5)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Global brightness multiplier for the output.", "location": "ui/render_settings_window.py:81-84" },
+            { "control": "Tonemap Softness", "type": "slider_float (0.1-4.0)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Controls highlight compression (asinh stretch).\nLow = more linear (brighter highlights).\nHigh = more logarithmic (reveals faint detail).", "location": "ui/render_settings_window.py:85-91" }
+          ]
+        },
+        {
+          "name": "Camera",
+          "controls": [
+            { "control": "FOV", "type": "slider_float (10-95 deg)", "tooltip": false, "location": "ui/render_settings_window.py:161-162" },
+            { "control": "Aperture", "type": "slider_float (0-0.15)", "tooltip": false, "location": "ui/render_settings_window.py:163-164" },
+            { "control": "Focal Depth", "type": "slider_float (0.1-10.0)", "tooltip": false, "location": "ui/render_settings_window.py:165-166" },
+            { "control": "Move Speed", "type": "slider_float (0.1-5.0)", "tooltip": false, "location": "ui/render_settings_window.py:167-168" },
+            { "control": "Rotate Speed", "type": "slider_float (0.1-5.0)", "tooltip": false, "location": "ui/render_settings_window.py:169-170" },
+            { "control": "Orbit Center", "type": "drag_float3", "tooltip": false, "location": "ui/render_settings_window.py:171-176" },
+            { "control": "Orbit Rate", "type": "slider_float (-0.02 to 0.02)", "tooltip": false, "location": "ui/render_settings_window.py:177-178" },
+            { "control": "Stereogram", "type": "checkbox", "tooltip": false, "location": "ui/render_settings_window.py:181" },
+            { "control": "Eye Offset", "note": "if Stereogram", "type": "slider_float (0-0.5)", "tooltip": false, "location": "ui/render_settings_window.py:183-184" },
+            { "control": "Parallel", "type": "radio_button", "tooltip": false, "location": "ui/render_settings_window.py:186-187" },
+            { "control": "Toe-in", "type": "radio_button", "tooltip": "conditional", "tooltipKind": "immediate", "tooltipNote": "only shown when this option is selected", "tooltipText": "Eyes converge on the Focal Depth plane", "location": "ui/render_settings_window.py:189-192" }
+          ]
+        },
+        {
+          "name": "Lighting",
+          "controls": [
+            { "control": "Light Dir", "type": "drag_float3 (-1..1)", "tooltip": false, "location": "ui/render_settings_window.py:202-205" },
+            { "control": "Light Color", "type": "color_edit3", "tooltip": false, "location": "ui/render_settings_window.py:206-207" },
+            { "control": "Intensity", "type": "slider_float (0-20)", "tooltip": false, "location": "ui/render_settings_window.py:208-209" },
+            { "control": "Enable NEE", "type": "checkbox", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Next Event Estimation: trace a shadow ray toward the\nlight for direct lighting. In rasterize mode, turning\nthis off leaves only the ambient + AO term.", "location": "ui/render_settings_window.py:211-216" },
+            { "control": "Cos-lobe Sky", "note": "OptiX only", "type": "checkbox", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Replace legacy directional sun + gradient sky\nwith a cosine-lobe environment model.\nSky color controls hemisphere glow,\nsun direction/color/intensity control sun disk.", "location": "ui/render_settings_window.py:218-226" },
+            { "control": "Sun Sharpness", "note": "if Cos-lobe Sky", "type": "slider_float (1-256)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Exponent of the sun's cosine-power lobe.\nHigher = tighter, sharper sun disk.", "location": "ui/render_settings_window.py:227-234" },
+            { "control": "Photosphere", "type": "checkbox", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Use equirectangular environment map for the sky\n(queried on primary-ray miss, i.e. the background).", "location": "ui/render_settings_window.py:235-240" }
+          ]
+        },
+        {
+          "name": "Sky",
+          "controls": [
+            { "control": "Sky Top", "type": "color_edit3", "tooltip": false, "location": "ui/render_settings_window.py:255" },
+            { "control": "Sky Bottom", "type": "color_edit3", "tooltip": false, "location": "ui/render_settings_window.py:256" },
+            { "control": "Sky Intensity", "note": "OpenGL renderer only", "type": "slider_float (0-5)", "tooltip": false, "location": "ui/render_settings_window.py:257-260" }
+          ]
+        },
+        {
+          "name": "Bloom controls",
+          "note": "shared, appears in Post-Process headers of both renderers",
+          "controls": [
+            { "control": "Bloom", "type": "checkbox", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Add a glow effect around bright areas.", "location": "ui/render_settings_window.py:96-98" },
+            { "control": "Threshold", "note": "if Bloom enabled", "type": "slider_float (0-2)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Brightness cutoff for bloom extraction.\nLower = more glow everywhere.", "location": "ui/render_settings_window.py:101-103" },
+            { "control": "Intensity (Bloom)", "type": "slider_float (0-3)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Strength of the bloom glow.", "location": "ui/render_settings_window.py:104-106" },
+            { "control": "Radius (Bloom)", "type": "slider_float (0.1-3)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Spread of the bloom blur kernel.", "location": "ui/render_settings_window.py:107-109" }
+          ]
+        },
+        {
+          "name": "Firefly clamp",
+          "note": "shared, Post-Process",
+          "controls": [
+            { "control": "Firefly Clamp", "type": "checkbox", "tooltip": false, "location": "ui/render_settings_window.py:151" },
+            { "control": "Firefly max value field", "note": "if enabled", "type": "drag_float", "tooltip": false, "location": "ui/render_settings_window.py:154-155" }
+          ]
+        },
+        {
+          "name": "Pathtrace mode row",
+          "note": "shared",
+          "controls": [
+            { "control": "Pathtrace: Off / N spp / Accumulate (cycle button)", "type": "button", "tooltip": false, "location": "ui/render_settings_window.py:124-125" },
+            { "control": "Samples slider (OptiX, path-trace mode)", "type": "slider_int (1-8)", "tooltip": false, "location": "ui/render_settings_window.py:127-129" },
+            { "control": "Samples slider (OptiX, rasterize mode)", "type": "slider_int (1-8)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Rasterize samples per frame (averaged before denoise)", "location": "ui/render_settings_window.py:133-137" }
+          ]
+        },
+        {
+          "name": "Resolution Scale row",
+          "note": "shared",
+          "controls": [
+            { "control": "Resolution Scale", "type": "input_float", "tooltip": false, "location": "ui/render_settings_window.py:142-146" }
+          ]
+        },
+        {
+          "name": "OptiX-specific settings",
+          "note": "active when renderer == 1",
+          "controls": [
+            { "control": "Capture SPP", "type": "slider_int (1-128)", "tooltip": false, "location": "ui/render_settings_window.py:272" },
+            { "control": "Re-render Preview", "type": "button (disabled while rt_active)", "tooltip": false, "location": "ui/render_settings_window.py:276-277" },
+            { "control": "Geometry", "type": "_persisted_header", "tooltip": false, "location": "ui/render_settings_window.py:310" },
+            { "control": "Sphere Scale", "type": "slider_float (0.1-10.0x)", "tooltip": false, "location": "ui/render_settings_window.py:311-313" },
+            { "control": "Sphere Jitter", "note": "if not using Curves", "type": "slider_float (0-1)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Per-sphere radius jitter to reduce banding artifacts", "location": "ui/render_settings_window.py:315-319" },
+            { "control": "Curves", "type": "checkbox", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Render entities as round linear curves oriented along velocity", "location": "ui/render_settings_window.py:321-323" },
+            { "control": "Curve Length", "note": "if Curves", "type": "slider_float (0-10)", "tooltip": false, "location": "ui/render_settings_window.py:325-326" },
+            { "control": "Curve R0", "note": "if Curves", "type": "slider_float (0.01-5.0)", "tooltip": false, "location": "ui/render_settings_window.py:327-328" },
+            { "control": "Curve R1", "note": "if Curves", "type": "slider_float (0.01-5.0)", "tooltip": false, "location": "ui/render_settings_window.py:329-330" },
+            { "control": "Enable Dish", "type": "checkbox", "tooltip": false, "location": "ui/render_settings_window.py:332" },
+            { "control": "Material", "type": "_persisted_header", "tooltip": false, "location": "ui/render_settings_window.py:335" },
+            { "control": "BRDF (Lambert/Glossy/Mirror)", "type": "combo", "tooltip": false, "location": "ui/render_settings_window.py:336-338" },
+            { "control": "Glossy IOR", "note": "if Glossy", "type": "slider_float (1.0-3.0)", "tooltip": false, "location": "ui/render_settings_window.py:339-341" },
+            { "control": "Albedo Saturation", "type": "slider_float (0-1)", "tooltip": false, "location": "ui/render_settings_window.py:342-343" },
+            { "control": "Albedo Brightness", "type": "slider_float (0-1)", "tooltip": false, "location": "ui/render_settings_window.py:344-345" },
+            { "control": "Rasterize", "type": "_persisted_header", "tooltip": false, "location": "ui/render_settings_window.py:352" },
+            { "control": "Ambient (rasterize)", "type": "slider_float (0-1)", "tooltip": false, "location": "ui/render_settings_window.py:356-357" },
+            { "control": "Ambient Color", "type": "color_edit3", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Ambient tint (scaled by Ambient), modulated by AO", "location": "ui/render_settings_window.py:358-361" },
+            { "control": "Depth of Field", "type": "checkbox", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Use the thin-lens camera (Aperture / Focal Depth in the\nCamera section) in rasterize mode. Nearly free with the denoiser on.", "location": "ui/render_settings_window.py:363-368" },
+            { "control": "Ambient Occlusion (rasterize)", "type": "checkbox", "tooltip": false, "location": "ui/render_settings_window.py:370-371" },
+            { "control": "AO Rays", "note": "if AO enabled", "type": "slider_int (1-16)", "tooltip": false, "location": "ui/render_settings_window.py:373-374" },
+            { "control": "AO Radius", "note": "if AO enabled", "type": "slider_float (0.01-5.0)", "tooltip": false, "location": "ui/render_settings_window.py:375-376" },
+            { "control": "Path Trace", "type": "_persisted_header", "tooltip": false, "location": "ui/render_settings_window.py:381" },
+            { "control": "Max Bounces", "type": "drag_int (0-64)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "0 = unbounded (Russian roulette only)", "location": "ui/render_settings_window.py:384-387" },
+            { "control": "RR Start Depth", "type": "slider_int (1-16)", "tooltip": false, "location": "ui/render_settings_window.py:388-389" },
+            { "control": "Emission Intensity", "type": "slider_float (0-100)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Radiance multiplier for emissive entities (negative hue)", "location": "ui/render_settings_window.py:390-394" },
+            { "control": "Post-Process", "type": "_persisted_header", "tooltip": false, "location": "ui/render_settings_window.py:399" },
+            { "control": "Denoise (path trace)", "type": "checkbox", "tooltip": false, "location": "ui/render_settings_window.py:402-403" },
+            { "control": "Denoise (rasterize)", "type": "checkbox", "tooltip": false, "location": "ui/render_settings_window.py:404-405" },
+            { "control": "(+ shared Firefly Clamp & Bloom, see above)", "location": "ui/render_settings_window.py:400,407" }
+          ]
+        },
+        {
+          "name": "OpenGL-specific settings",
+          "note": "active when renderer == 0",
+          "controls": [
+            { "control": "Capture SPP", "type": "slider_int (1-512)", "tooltip": false, "location": "ui/render_settings_window.py:437" },
+            { "control": "Re-render Preview", "type": "button (disabled while rt_active)", "tooltip": false, "location": "ui/render_settings_window.py:441-442" },
+            { "control": "Path Trace", "type": "_persisted_header", "tooltip": false, "location": "ui/render_settings_window.py:469" },
+            { "control": "Colored Extinction", "type": "checkbox", "tooltip": false, "location": "ui/render_settings_window.py:470-471" },
+            { "control": "Albedo RGB", "note": "if Colored Extinction", "type": "color_edit3", "tooltip": false, "location": "ui/render_settings_window.py:473" },
+            { "control": "Ext Saturation", "note": "if Colored Extinction", "type": "slider_float (0-1)", "tooltip": false, "location": "ui/render_settings_window.py:474-475" },
+            { "control": "Ext Brightness", "note": "if Colored Extinction", "type": "slider_float (0-1)", "tooltip": false, "location": "ui/render_settings_window.py:476-477" },
+            { "control": "Extinction RGB", "note": "else branch", "type": "color_edit3", "tooltip": false, "location": "ui/render_settings_window.py:479" },
+            { "control": "Albedo Saturation", "note": "else branch", "type": "slider_float (0-1)", "tooltip": false, "location": "ui/render_settings_window.py:480-481" },
+            { "control": "Albedo Brightness", "note": "else branch", "type": "slider_float (0-1)", "tooltip": false, "location": "ui/render_settings_window.py:482-483" },
+            { "control": "Density Scale", "type": "slider_float (0.00001-10.0)", "tooltip": false, "location": "ui/render_settings_window.py:486-487" },
+            { "control": "Scattering (g)", "type": "slider_float (-1..1)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "HG phase: -1 back, 0 isotropic, +1 forward", "location": "ui/render_settings_window.py:488-490" },
+            { "control": "Emission", "type": "drag_float (0-100)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "Self-emission intensity (0 = off)", "location": "ui/render_settings_window.py:491-494" },
+            { "control": "Max Bounces", "type": "drag_int (0-64)", "tooltip": true, "tooltipKind": "immediate", "tooltipText": "0 = unbounded (Russian roulette only)", "location": "ui/render_settings_window.py:495-497" },
+            { "control": "Enable Dish", "type": "checkbox", "tooltip": false, "location": "ui/render_settings_window.py:499" },
+            { "control": "Grid Resolutions", "type": "_persisted_header", "tooltip": false, "location": "ui/render_settings_window.py:506" },
+            { "control": "Density (2^n)", "type": "slider_int (5-10)", "tooltip": true, "tooltipKind": "immediate (dynamic text)", "tooltipText": "e.g. \"512x512x512  (1024 MB)\"", "location": "ui/render_settings_window.py:507-511" },
+            { "control": "Color (2^n)", "type": "slider_int (5-10)", "tooltip": true, "tooltipKind": "immediate (dynamic text)", "tooltipText": "e.g. \"512x512x512  (2048 MB, 2 channels)\"", "location": "ui/render_settings_window.py:512-516" },
+            { "control": "Majorant (2^n)", "type": "slider_int (3-8)", "tooltip": true, "tooltipKind": "immediate (dynamic text)", "tooltipText": "e.g. \"64x64x64\"", "location": "ui/render_settings_window.py:517-521" },
+            { "control": "Post Process", "type": "_persisted_header", "tooltip": false, "location": "ui/render_settings_window.py:529" },
+            { "control": "(+ shared Firefly Clamp & Bloom)", "location": "ui/render_settings_window.py:530-531" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "config_clipboard",
+      "title": "Config Clipboard - EXPERIMENTAL",
+      "entryPoint": "ui/config_clipboard_window.py:41",
+      "sections": [
+        {
+          "name": "top",
+          "controls": [
+            { "control": "Checkpoint entry", "note": "one per checkpoint, newest first", "type": "selectable", "tooltip": false, "location": "ui/config_clipboard_window.py:63-68" },
+            { "control": "Delete (X) button per entry", "type": "small_button", "tooltip": false, "location": "ui/config_clipboard_window.py:83-86" },
+            { "control": "Rename field", "note": "right-click popup on an entry", "type": "input_text", "tooltip": false, "location": "ui/config_clipboard_window.py:96-103" }
+          ]
+        }
+      ],
+      "notes": [
+        "Static (non-interactive) text: 'Press Ctrl+C to add a checkpoint' (:47), 'No checkpoints yet' (:51).",
+        "All controls in this window lack tooltips."
+      ]
+    },
+    {
+      "id": "radio",
+      "title": "Radio",
+      "entryPoint": "ui/radio_window.py:10",
+      "sections": [
+        {
+          "name": "top",
+          "controls": [
+            { "control": "Radio enabled", "type": "checkbox", "tooltip": false, "location": "ui/radio_window.py:16-19" },
+            { "control": "Target Frequency", "type": "slider_float (-15.0 to 15.0)", "tooltip": false, "location": "ui/radio_window.py:23-27" },
+            { "control": "Bandwidth", "type": "slider_float (0.0 to 2.0)", "tooltip": false, "location": "ui/radio_window.py:31-35" }
+          ]
+        }
+      ],
+      "notes": [
+        "Despite the window's name, it has no imgui.radio_button widgets — it's a frequency-band visibility filter.",
+        "The Extras menu entry that opens it does have a tooltip (see main_menu Extras > Radio).",
+        "The only true radio-button pair among the surveyed windows is 'Parallel'/'Toe-in' in Render Settings > Camera > Stereogram."
+      ]
+    },
+    {
+      "id": "screen_recording",
+      "title": "Screen Recording",
+      "entryPoint": "ui/help_windows.py:228",
+      "openedFrom": "Extras > Screen Recording Controls (main_menu Extras section)",
+      "sections": [
+        {
+          "name": "top",
+          "controls": [
+            { "control": "Video End Frame", "type": "input_int", "tooltip": true, "tooltipText": "Target frame for video to end on.\nWhen set, recording will be delayed until the\ncalculated start frame is reached.\nSet to 0 to start recording immediately.", "location": "ui/help_windows.py:254-258" },
+            { "control": "Video Length", "type": "drag_float (\"%.0f seconds\")", "tooltip": true, "tooltipText": "After Video reaches this length, the recording will be stopped", "location": "ui/help_windows.py:263-273" },
+            { "control": "Capture Physics Frequency", "note": "disabled while recording", "type": "slider_int (1-100)", "tooltip": true, "tooltipText": "Physics steps per frame for video/screenshots.\nHigher values = faster physics with smoother motion blur.\nAlso determines screenshot exposure (# of samples to blend together).", "location": "ui/help_windows.py:281-288" },
+            { "control": "Motion Blur (Recording)", "type": "checkbox", "tooltip": true, "tooltipText": "Enable motion blur during video recording.\nThis setting overrides the Motion Blur checkbox in Preferences while recording.", "location": "ui/help_windows.py:315-319" },
+            { "control": "Blur Quality (Recording)", "note": "if Motion Blur (Recording) enabled", "type": "slider_int (1-20)", "tooltip": true, "tooltipText": "Motion Blur can be expensive at high frequencies,\nskip some frames to improve performance.\nThis setting overrides the Blur Quality slider in Preferences while recording.", "location": "ui/help_windows.py:331-337" },
+            { "control": "Downsample Resolution Factor", "type": "input_int", "tooltip": true, "tooltipText": "Set to '2' to render a video at half resolution.", "location": "ui/help_windows.py:345-346" },
+            { "control": "Filename", "type": "input_text (max 256)", "tooltip": true, "tooltipText": "Defaults to 'animation' if left empty. Saves to documents/Fluoddity/ Video filenames get timestamps appended", "location": "ui/help_windows.py:349-354" }
+          ]
+        }
+      ],
+      "notes": [
+        "Non-interactive display elements also present: recording status text, current frame counter, and a computed 'Frame Range: X --- Y' text that itself has a _delayed_tooltip (ui/help_windows.py:307-311): \"Estimated recording range based on current settings.\\nTotal simulation frames: {n}\\n({max_frames} output frames x {motion_blur_samples} physics steps)\"."
+      ]
+    },
+    {
+      "id": "main_menu",
+      "title": "Main Menu Bar",
+      "entryPoint": "ui/menu_bar.py:13",
+      "sections": [
+        {
+          "name": "File",
+          "entryPoint": "ui/menu_bar.py:24",
+          "controls": [
+            { "control": "New", "type": "menu_item", "tooltip": true, "tooltipText": "Start a fresh config. Loads from _Default", "location": "ui/menu_bar.py:33-37" },
+            { "control": "Save...", "type": "menu_item", "tooltip": true, "tooltipText": "Save the current physics settings including particle rules.", "location": "ui/menu_bar.py:41-45" },
+            { "control": "Load", "note": "submenu, live-preview list of config files", "type": "begin_menu", "tooltip": false, "location": "ui/menu_bar.py:48-94" }
+          ]
+        },
+        {
+          "name": "Editor",
+          "entryPoint": "ui/menu_bar.py:98",
+          "controls": [
+            { "control": "Preferences (toggle)", "type": "menu_item", "tooltip": false, "location": "ui/menu_bar.py:107-108" },
+            { "control": "Render settings (toggle)", "type": "menu_item", "tooltip": true, "tooltipText": "Per-renderer controls: RT mode, capture, camera,\nmedium/geometry, lighting, sky, and post-process.\nShows the active renderer's settings (Preferences -> Renderer).", "location": "ui/menu_bar.py:111-113" },
+            { "control": "Save Editor Settings...", "type": "menu_item", "tooltip": true, "tooltipText": "Save all non-physics settings (preferences, render settings,\nwindow visibility, and window/docking layout).", "location": "ui/menu_bar.py:118-123" },
+            { "control": "Load Editor Settings", "note": "submenu, .editor.json list + per-entry delete button", "type": "begin_menu", "tooltip": false, "location": "ui/menu_bar.py:126-157" }
+          ]
+        },
+        {
+          "name": "top-level items (not in a submenu)",
+          "controls": [
+            { "control": "Show/Hide Windows (X)", "type": "menu_item", "tooltip": false, "location": "ui/menu_bar.py:162-163" }
+          ]
+        },
+        {
+          "name": "Reset...",
+          "entryPoint": "ui/menu_bar.py:166",
+          "controls": [
+            { "control": "Revert to '{project}'", "note": "dynamic label", "type": "menu_item", "tooltip": true, "tooltipKind": "dynamic", "tooltipText": "e.g. \"Equivalent to File -> Load {project}\"", "location": "ui/menu_bar.py:176-182" },
+            { "control": "Reset all slider ranges to defaults", "type": "menu_item", "tooltip": false, "location": "ui/menu_bar.py:185-187" },
+            { "control": "Reset all parameter sweeps", "type": "menu_item", "tooltip": true, "tooltipText": "Set all parameter sweeps to 'off'.", "location": "ui/menu_bar.py:190-196" },
+            { "control": "Reset all UI settings", "type": "menu_item", "tooltip": true, "tooltipText": "Restore all preferences and ui state to factory settings. \nEquivalent to deleting preferences.config, or running this\nprogram for the first time. Physics config saves are not affected.", "location": "ui/menu_bar.py:199-204" },
+            { "control": "Reset camera", "type": "menu_item", "tooltip": true, "tooltipText": "Return camera to default position and zoom level.", "location": "ui/menu_bar.py:207-209" },
+            { "control": "Reset Canvas", "type": "menu_item", "tooltip": true, "tooltipText": "Clear the trail canvas to zero.", "location": "ui/menu_bar.py:212-214" }
+          ]
+        },
+        {
+          "name": "Locks",
+          "note": "only visible if parameter locks enabled",
+          "entryPoint": "ui/menu_bar.py:221",
+          "controls": [
+            { "control": "Unlock Everything / Lock Everything", "note": "dynamic label based on pls.any_locked", "type": "menu_item", "tooltip": false, "location": "ui/menu_bar.py:230-235" },
+            { "control": "Lock Rule", "type": "checkbox", "tooltip": true, "tooltipText": "Prevent the target rule and mutation seed\nfrom being changed by config loads/pastes.\nMutation seed can also be locked independently via Alt-click.", "location": "ui/menu_bar.py:239-242" }
+          ]
+        },
+        {
+          "name": "Help",
+          "entryPoint": "ui/menu_bar.py:247",
+          "controls": [
+            { "control": "Guide (toggle)", "type": "menu_item", "tooltip": false, "location": "ui/menu_bar.py:256-257" },
+            { "control": "Controls (toggle)", "type": "menu_item", "tooltip": false, "location": "ui/menu_bar.py:258-259" },
+            { "control": "Performance (toggle)", "type": "menu_item", "tooltip": false, "location": "ui/menu_bar.py:260-261" },
+            { "control": "Parameter Sweeps (toggle)", "type": "menu_item", "tooltip": false, "location": "ui/menu_bar.py:262-263" }
+          ]
+        },
+        {
+          "name": "Extras",
+          "entryPoint": "ui/menu_bar.py:267",
+          "controls": [
+            { "control": "Config Clipboard", "type": "checkbox", "tooltip": true, "tooltipText": "Set restorable checkpoints with Ctrl-C", "location": "ui/menu_bar.py:277-281" },
+            { "control": "Screen Recording Controls", "type": "checkbox", "tooltip": false, "location": "ui/menu_bar.py:284-287" },
+            { "control": "Parameter Locks - EXPERIMENTAL", "type": "checkbox", "tooltip": true, "tooltipText": "Alt-Click on a parameter to freeze it and its value\nwon't change when loading new configs.", "location": "ui/menu_bar.py:290-303" },
+            { "control": "Generics", "type": "checkbox", "tooltip": true, "tooltipText": "8 scratch sliders sent as uniforms to\nentity_update and field_override shaders.\nUseful for live-coding shader experiments.", "location": "ui/menu_bar.py:308-312" },
+            { "control": "Plotting", "type": "checkbox", "tooltip": true, "tooltipText": "GPU histogram visualization from report()\ncalls in entity_update.glsl.", "location": "ui/menu_bar.py:315-319" },
+            { "control": "Radio", "type": "checkbox", "tooltip": true, "tooltipText": "Filter particle visibility by frequency band.\nOnly particles within the target frequency\n+/- bandwidth are visible.", "location": "ui/menu_bar.py:322-326" },
+            { "control": "Scheduled Renders", "type": "checkbox", "tooltip": true, "tooltipText": "Queue multiple render specs for\nunattended batch video rendering.", "location": "ui/menu_bar.py:329-333" },
+            { "control": "Save Simulation State...", "type": "menu_item", "tooltip": true, "tooltipText": "Dump the current entity buffer and 3D canvas\nto disk (particle positions + trail densities).", "location": "ui/menu_bar.py:338-343" },
+            { "control": "Load Simulation State", "note": "submenu, .fsim list + per-entry delete button", "type": "begin_menu", "tooltip": false, "location": "ui/menu_bar.py:345-376" }
+          ]
+        }
+      ]
+    }
+  ],
+  "noTooltipSummary": {
+    "physics_settings": ["all collapsing headers", "the Appearance menu itself", "sweep buttons (X/Y/C)", "Min/Max fields", "Reset buttons in the slider context menu", "Mutation Seed text"],
+    "preferences": ["none missing — every real control has a tooltip"],
+    "render_settings": [
+      "entire Camera section (FOV, Aperture, Focal Depth, Move/Rotate Speed, Orbit Center/Rate, Stereogram, Eye Offset, Parallel)",
+      "most Lighting/Sky color & vector fields",
+      "Firefly Clamp",
+      "Resolution Scale",
+      "most OptiX geometry/material/rasterize sub-controls (Sphere Scale, Curve Length/R0/R1, Enable Dish, BRDF, Glossy IOR, Albedo Saturation/Brightness, Ambient, AO toggle/rays/radius, RR Start Depth, Denoise x2)",
+      "most OpenGL medium sub-controls (Colored Extinction, Albedo/Extinction RGB & sat/brightness, Density Scale, Enable Dish)",
+      "all _persisted_header collapsing headers",
+      "Capture SPP",
+      "Re-render Preview"
+    ],
+    "config_clipboard": ["all controls (entry selectable, delete button, rename field)"],
+    "radio": ["all controls (Radio enabled, Target Frequency, Bandwidth)"],
+    "main_menu": ["Load submenu", "Preferences toggle", "Load Editor Settings submenu", "Show/Hide Windows", "Reset all slider ranges", "Unlock/Lock Everything", "all four Help menu toggles", "Screen Recording Controls checkbox", "Load Simulation State submenu"]
+  }
+}

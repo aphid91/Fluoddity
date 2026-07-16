@@ -752,7 +752,8 @@ void main() {
     
     //frame_count == 0 signals a simulation reset
     vec2 epos2 = vec2(e.px, e.py); // 2D position for parameter sweeps
-    if (frame_count==0||calculate_setting(get_particle_hazard_rate(),epos2,cohort)>hash(vec2(float(index)/float(ACTIVE_COUNT),frame_count))){reset(index);return;}
+    if (frame_count==0||calculate_setting(get_particle_hazard_rate(),epos2,cohort)>hash(vec2(float(index)/float(ACTIVE_COUNT),frame_count)))
+    {reset(index);return;}
 
 
 

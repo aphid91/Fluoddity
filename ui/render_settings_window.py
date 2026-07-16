@@ -257,7 +257,7 @@ class RenderSettingsWindowMixin:
             if self.state.preferences.rendering.renderer == 0:
                 # Sky intensity applies to the volumetric tracer's gradient.
                 _, lit.sky_intensity = imgui.slider_float(
-                    "Sky Intensity", lit.sky_intensity, 0.0, 5.0)
+                    "Sky Intensity", lit.sky_intensity, 0.0, 1.0)
 
     # ------------------------------------------------------------------- OptiX
     def _render_optix_settings(self):
@@ -481,8 +481,10 @@ class RenderSettingsWindowMixin:
                     "Albedo Saturation", ti.albedo_saturation, 0.0, 1.0)
                 _, ti.albedo_brightness = imgui.slider_float(
                     "Albedo Brightness", ti.albedo_brightness, 0.0, 1.0)
-            _, ti.density_scale = imgui.drag_float(
-                "Density Scale", ti.density_scale, 0.00001, 0.00001, 10.0, "%.5f")
+            #_, ti.density_scale = imgui.drag_float(
+            #    "Density Scale", ti.density_scale, 0.00001, 0.00001, 10.0, "%.5f")
+            _, ti.density_scale = imgui.slider_float(
+                "Density Scale", ti.density_scale, 0.000001, 0.0005,format="%.7f")
             _, ti.hg_g = imgui.slider_float("Scattering (g)", ti.hg_g, -1.0, 1.0)
             if imgui.is_item_hovered():
                 imgui.set_tooltip("HG phase: -1 back, 0 isotropic, +1 forward")

@@ -71,7 +71,7 @@ PHYSICS_PARAMS: list[PhysicsParamDef] = [
     PhysicsParamDef(
         name='GLOBAL_FORCE_MULT', label='Global Force Mult', group='forces',
         default_min=0.0, default_max=2.0,
-        description="Scales axial and lateral forces applied to particles, and scales strafe power. Often tuned in the opposite direction to Sensor Gain and Drag to offset exploding/vanishing particle speed.",
+        description="Scales axial, lateral, and sagittal forces applied to particles, and scales strafe power. Often tuned in the opposite direction to Sensor Gain and Drag to offset exploding/vanishing particle speed.",
     ),
     PhysicsParamDef(
         name='DRAG', label='Drag', group='forces',
@@ -82,9 +82,9 @@ PHYSICS_PARAMS: list[PhysicsParamDef] = [
 
     # --- Advanced group ---
     PhysicsParamDef(
-        name='AXIAL_FORCE', label='Axial Force', group='advanced',
+        name='AXIAL_FORCE', label='Axial/Sagittal Force', group='advanced',
         default_min=-1.0, default_max=1.0,
-        description="Controls the strength of forces applied parallel to the direction of travel: acceleration and braking",
+        description="Controls the strength of forces applied parallel to the direction of travel and up/down: acceleration and braking, climbing and diving",
     ),
     PhysicsParamDef(
         name='LATERAL_FORCE', label='Lateral Force', group='advanced',
