@@ -370,6 +370,15 @@ class Camera:
 
         return (tex_x, tex_y)
 
+    def get_screen_center(self) -> tuple:
+        """Framebuffer center in the same screen-coordinate space as mouse_pos.
+
+        Used to drive picking/focus actions (e.g. gamepad D-pad) at the center
+        of the canvas rather than at the mouse cursor.
+        """
+        width, height = glfw.get_framebuffer_size(self.window)
+        return (max(1, width) / 2.0, max(1, height) / 2.0)
+
     def screen_to_ray_3d(self, screen_pos: tuple) -> tuple[np.ndarray, np.ndarray]:
         """Convert screen coordinates to a 3D ray for entity picking.
 

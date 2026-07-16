@@ -296,6 +296,13 @@ class App:
         if self.joystick_state.get('randomize_mutations_pressed', False):
             ui_state.request_randomize_mutations = True
 
+        # D-pad: Up = pick entity at screen center, Down = undo, Left = rack focus
+        self.command_handler.handle_gamepad_dpad(
+            ui_state,
+            pick_pressed=self.joystick_state.get('dpad_pick_pressed', False),
+            undo_pressed=self.joystick_state.get('dpad_undo_pressed', False),
+            focus_pressed=self.joystick_state.get('dpad_focus_pressed', False))
+
         # 2. Process one-shot commands
         result = self.command_handler.process_commands(ui_state)
         if result == 'screenshot_pending' and not self.screenshot_pending and not self.screenshot_in_progress:

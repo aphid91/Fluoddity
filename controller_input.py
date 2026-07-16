@@ -100,6 +100,9 @@ BUTTON_RB = 5
 BUTTON_SELECT = 6
 BUTTON_START = 7
 
+# D-pad is reported as a hat, not a button. Values are a bitmask of directions.
+HAT_DPAD = 0
+
 
 def find_joystick():
     """Find the first connected joystick."""
@@ -144,6 +147,7 @@ def process_controller_input(controller_cam, joystick_state, dt, *,
     # Get joystick state
     axes_raw = glfw.get_joystick_axes(jid)
     buttons_raw = glfw.get_joystick_buttons(jid)
+    hats_raw = glfw.get_joystick_hats(jid)
 
     if axes_raw is None or buttons_raw is None:
         return
@@ -158,6 +162,11 @@ def process_controller_input(controller_cam, joystick_state, dt, *,
     # Extract values from ctypes pointers
     axes = [axes_ptr[i] for i in range(axes_count)]
     buttons = [buttons_ptr[i] for i in range(buttons_count)]
+
+    hats = []
+    if hats_raw is not None:
+        hats_ptr, hats_count = hats_raw
+        hats = [hats_ptr[i] for i in range(hats_count)]
 
     # Pad axes list if needed
     while len(axes) < 6:
@@ -201,6 +210,22 @@ def process_controller_input(controller_cam, joystick_state, dt, *,
     )
 
     joystick_state['prev_buttons'] = buttons.copy()
+
+    # D-pad edge detection (hat bitmask: HAT_UP/DOWN/LEFT/RIGHT can combine for diagonals)
+    prev_hat = joystick_state.get('prev_hat', 0)
+    hat = hats[HAT_DPAD] if len(hats) > HAT_DPAD else 0
+
+    def hat_pressed(direction):
+        return bool(hat & direction and not prev_hat & direction)
+
+    # Up: select particle at screen center (equivalent to left click)
+    joystick_state['dpad_pick_pressed'] = hat_pressed(glfw.HAT_UP)
+    # Down: undo (equivalent to right click)
+    joystick_state['dpad_undo_pressed'] = hat_pressed(glfw.HAT_DOWN)
+    # Left: rack focus at screen center (equivalent to hovering center + pressing N)
+    joystick_state['dpad_focus_pressed'] = hat_pressed(glfw.HAT_LEFT)
+
+    joystick_state['prev_hat'] = hat
 
     # Right bumper held = fast mode
     speed_mult = FAST_MULTIPLIER if buttons[BUTTON_RB] else 1.0

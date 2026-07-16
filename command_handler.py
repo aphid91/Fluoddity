@@ -284,9 +284,13 @@ class CommandHandler:
             ray_origin, ray_dir,
             num_cohorts=ui_state.sim.num_cohorts, active_count=self.sim.entity_count)
 
-    def _handle_pick_focal(self, ui_state):
-        """Handle N key: pick nearest entity to mouse, set focal plane and orbit center."""
-        ray_origin, ray_dir = self.camera.screen_to_ray_3d(ui_state.mouse_pos)
+    def _handle_pick_focal(self, ui_state, screen_pos=None):
+        """Handle N key: pick nearest entity to mouse, set focal plane and orbit center.
+
+        screen_pos overrides the mouse position (e.g. gamepad D-pad rack-focus
+        at the canvas center).
+        """
+        ray_origin, ray_dir = self.camera.screen_to_ray_3d(screen_pos or ui_state.mouse_pos)
         _entity_id, _entity_pos, _cohort, depth = self._pick_entity_3d(
             ui_state, ray_origin, ray_dir)
         if depth > 0:
@@ -316,11 +320,37 @@ class CommandHandler:
         if ui_state.left_click_this_frame:
             self._handle_entity_pick(ui_state, canvas_aspect_ratio)
         elif ui_state.right_click_this_frame:
-            if self.rule_manager.length() > 1:
-                prev_rule, prev_seed = self.rule_manager.pop_rule()
-                if prev_seed is not None:
-                    ui_state.sim.rule_seed = prev_seed
-                self.sim.apply_rule(prev_rule)
+            self._handle_undo(ui_state)
+
+    def _handle_undo(self, ui_state):
+        """Pop the current rule off the undo stack (equivalent to right click)."""
+        if self.rule_manager.length() > 1:
+            prev_rule, prev_seed = self.rule_manager.pop_rule()
+            if prev_seed is not None:
+                ui_state.sim.rule_seed = prev_seed
+            self.sim.apply_rule(prev_rule)
+
+    def handle_gamepad_dpad(self, ui_state, *, pick_pressed, undo_pressed, focus_pressed):
+        """D-pad shortcuts, mirroring left-click / right-click / N-key at screen center.
+
+        Up = pick entity at canvas center (left click), Down = undo (right
+        click), Left = rack focus at canvas center (hover-center + N).
+        """
+        if pick_pressed and ui_state.preferences.ui_windows.mouse_mode == "Select Particle" \
+                and not ui_state.sim.parameter_sweeps_enabled:
+            canvas_aspect_ratio = ui_state.preferences.rendering.canvas_aspect_ratio
+            canvas_aspect_ratio = tuple(float(x) for x in canvas_aspect_ratio.split(":"))
+            canvas_aspect_ratio = canvas_aspect_ratio[1] / canvas_aspect_ratio[0]
+            center = self.camera.get_screen_center()
+            self._handle_entity_pick(ui_state, canvas_aspect_ratio, screen_pos=center)
+
+        if undo_pressed and ui_state.preferences.ui_windows.mouse_mode == "Select Particle" \
+                and not ui_state.sim.parameter_sweeps_enabled:
+            self._handle_undo(ui_state)
+
+        if focus_pressed:
+            center = self.camera.get_screen_center()
+            self._handle_pick_focal(ui_state, screen_pos=center)
 
     def _handle_sweep_click(self, ui_state):
         """Left click while parameter sweeps are enabled: copy the clicked
@@ -334,9 +364,13 @@ class CommandHandler:
         if 0 <= entity_id < self.sim.entity_count:
             self.sim.update_sliders_from_particle(entity_pos, entity_cohort)
 
-    def _handle_entity_pick(self, ui_state, canvas_aspect_ratio):
-        """Handle entity selection via left click in Select Particle mode (3D ray pick)."""
-        ray_origin, ray_dir = self.camera.screen_to_ray_3d(ui_state.mouse_pos)
+    def _handle_entity_pick(self, ui_state, canvas_aspect_ratio, screen_pos=None):
+        """Handle entity selection via left click in Select Particle mode (3D ray pick).
+
+        screen_pos overrides the mouse position (e.g. gamepad D-pad pick at
+        the canvas center).
+        """
+        ray_origin, ray_dir = self.camera.screen_to_ray_3d(screen_pos or ui_state.mouse_pos)
         entity_id, entity_pos, entity_cohort, _depth = self._pick_entity_3d(
             ui_state, ray_origin, ray_dir)
 
