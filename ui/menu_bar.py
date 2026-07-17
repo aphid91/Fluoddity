@@ -304,19 +304,30 @@ class MenuBarMixin:
 
                 imgui.separator()
 
-                # Generics window toggle
-                _, self.state.preferences.ui_windows.show_generics_window = imgui.checkbox(
-                    "Generics",
-                    self.state.preferences.ui_windows.show_generics_window
-                )
-                self._delayed_tooltip("8 scratch sliders sent as uniforms to\nentity_update and field_override shaders.\nUseful for live-coding shader experiments.")
+                # Dev submenu (Generics + Plotting)
+                if imgui.begin_menu("Dev", not self.force_close_main_menus):
+                    any_menu_open_this_frame = True
+                    dev_min = imgui.get_window_pos()
+                    dev_size = imgui.get_window_size()
+                    menu_rectangles.append((dev_min.x, dev_min.y,
+                                           dev_min.x + dev_size.x,
+                                           dev_min.y + dev_size.y))
 
-                # Plotting window toggle
-                _, self.state.preferences.ui_windows.show_plotting_window = imgui.checkbox(
-                    "Plotting",
-                    self.state.preferences.ui_windows.show_plotting_window
-                )
-                self._delayed_tooltip("GPU histogram visualization from report()\ncalls in entity_update.glsl.")
+                    # Generics window toggle
+                    _, self.state.preferences.ui_windows.show_generics_window = imgui.checkbox(
+                        "Generics",
+                        self.state.preferences.ui_windows.show_generics_window
+                    )
+                    self._delayed_tooltip("DEV: Use generic03.xyzw and generic47.xyzw as variables in entity_update.glsl")
+
+                    # Plotting window toggle
+                    _, self.state.preferences.ui_windows.show_plotting_window = imgui.checkbox(
+                        "Plotting",
+                        self.state.preferences.ui_windows.show_plotting_window
+                    )
+                    self._delayed_tooltip("DEV: Use report() in entity_update.glsl to generate histograms")
+
+                    imgui.end_menu()
 
                 # Radio window toggle
                 _, self.state.preferences.ui_windows.show_radio_window = imgui.checkbox(

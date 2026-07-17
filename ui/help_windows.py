@@ -23,6 +23,8 @@ class HelpWindowsMixin:
             imgui.spacing()
             if imgui.collapsing_header("Keyboard Controls", imgui.TreeNodeFlags_.default_open):
                 imgui.text("Edit 'keyboard_controls.json' in documents/Fluoddity")
+
+                imgui.separator_text("Core")
                 # Camera movement keys
                 w = self.keybindings.get_key_display_name("camera_forward")
                 a = self.keybindings.get_key_display_name("camera_left")
@@ -34,21 +36,27 @@ class HelpWindowsMixin:
                 e = self.keybindings.get_key_display_name("camera_in")
                 imgui.bullet_text(f"{q}/{e} - Zoom out/in")
 
-                imgui.bullet_text(f"Ctrl+{self.keybindings.get_key_display_name('copy_config_with_ctrl')} - Copy config to clipboard")
-                imgui.bullet_text(f"Ctrl+{self.keybindings.get_key_display_name('paste_config_with_ctrl')} - Paste config from clipboard")
-                imgui.bullet_text(f"{self.keybindings.get_key_display_name('randomize_mutations')} - Randomize Mutation seed")
-                imgui.bullet_text(f"{self.keybindings.get_key_display_name('exit_keybinding')} - Exit application")
-                imgui.bullet_text(f"{self.keybindings.get_key_display_name('record_screen')} - Toggle video recording")
-                imgui.bullet_text("Shift+P - Take screenshot")
                 imgui.bullet_text(f"{self.keybindings.get_key_display_name('toggle_pause')} - Pause/resume simulation")
                 imgui.bullet_text(f"{self.keybindings.get_key_display_name('reset_keybinding')} - Reset particles to Initial Conditions")
+                imgui.bullet_text(f"{self.keybindings.get_key_display_name('toggle_sidebar')} - Toggle windows/sidebar")
+                imgui.bullet_text(f"{self.keybindings.get_key_display_name('toggle_help')} - Show tutorial")
+                imgui.bullet_text(f"{self.keybindings.get_key_display_name('exit_keybinding')} - Exit application")
+
+                imgui.separator_text("Randomize")
+                imgui.bullet_text(f"{self.keybindings.get_key_display_name('randomize_rules')} - Randomize particle behavior + new mutation seed")
+                imgui.bullet_text(f"{self.keybindings.get_key_display_name('randomize_mutations')} - Randomize Mutation seed")
+
+                imgui.separator_text("Capture")
+                imgui.bullet_text(f"Ctrl+{self.keybindings.get_key_display_name('copy_config_with_ctrl')} - Copy config to clipboard")
+                imgui.bullet_text(f"Ctrl+{self.keybindings.get_key_display_name('paste_config_with_ctrl')} - Paste config from clipboard")
+                imgui.bullet_text(f"{self.keybindings.get_key_display_name('record_screen')} - Toggle video recording")
+                imgui.bullet_text(f"Shift+{self.keybindings.get_key_display_name('record_screen')} - Take screenshot")
+
+                imgui.separator_text("Extras")
+                imgui.bullet_text(f"{self.keybindings.get_key_display_name('cycle_rt_mode')} - Cycle renderer path-trace mode")
+                imgui.bullet_text(f"{self.keybindings.get_key_display_name('pick_focal_entity')} - Rack focus to nearest particle under cursor")
                 imgui.bullet_text(f"{self.keybindings.get_key_display_name('toggle_parameter_sweep')} - Toggle parameter sweeps")
                 imgui.bullet_text(f"{self.keybindings.get_key_display_name('reload_shaders')} - Reload shaders (Sometimes fixes frozen/black screen)")
-                imgui.bullet_text(f"{self.keybindings.get_key_display_name('toggle_help')} - Show tutorial")
-                imgui.bullet_text(f"{self.keybindings.get_key_display_name('randomize_rules')} - Randomize particle behavior + new mutation seed")
-                imgui.bullet_text(f"{self.keybindings.get_key_display_name('toggle_sidebar')} - Toggle windows/sidebar")
-                imgui.bullet_text(f"{self.keybindings.get_key_display_name('pick_focal_entity')} - Rack focus to nearest particle under cursor")
-                imgui.bullet_text(f"{self.keybindings.get_key_display_name('cycle_rt_mode')} - Cycle realtime RT mode")
 
             imgui.spacing()
             if imgui.collapsing_header("Gamepad Controls"):
