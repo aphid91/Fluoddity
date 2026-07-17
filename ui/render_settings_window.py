@@ -280,7 +280,7 @@ class RenderSettingsWindowMixin:
         rt_active = r.rt_mode > 0
         if rt_active:
             imgui.begin_disabled()
-        if imgui.button("Re-render Preview"):
+        if imgui.button("Re-render pathtrace preview"):
             self._request_optix_preview = True
         if rt_active:
             imgui.end_disabled()
@@ -445,7 +445,7 @@ class RenderSettingsWindowMixin:
         rt_active = r.rt_mode > 0
         if rt_active:
             imgui.begin_disabled()
-        if imgui.button("Re-render Preview"):
+        if imgui.button("Re-render pathtrace preview"):
             self._request_tracer_preview = True
         if rt_active:
             imgui.end_disabled()
@@ -495,10 +495,10 @@ class RenderSettingsWindowMixin:
             _, ti.hg_g = imgui.slider_float("Scattering (g)", ti.hg_g, -1.0, 1.0)
             if imgui.is_item_hovered():
                 imgui.set_tooltip("HG phase: -1 back, 0 isotropic, +1 forward")
-            _, ti.emission_strength = imgui.drag_float(
-                "Emission", ti.emission_strength, 0.01, 0.0, 100.0, "%.3f")
-            if imgui.is_item_hovered():
-                imgui.set_tooltip("Self-emission intensity (0 = off)")
+            # _, ti.emission_strength = imgui.drag_float(
+            #     "Emission", ti.emission_strength, 0.01, 0.0, 100.0, "%.3f")
+            # if imgui.is_item_hovered():
+            #     imgui.set_tooltip("Self-emission intensity (0 = off)")
             _, ti.max_bounces = imgui.drag_int("Max Bounces", ti.max_bounces, 0.1, 0, 64)
             if imgui.is_item_hovered():
                 imgui.set_tooltip("0 = unbounded (Russian roulette only)")

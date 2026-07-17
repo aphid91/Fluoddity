@@ -163,8 +163,15 @@ class RendererHost:
         pt.denoise_enabled = p.optix.pt_denoise_enabled
         pt.aperture = ui_state.camera.aperture
         pt.focal_plane_depth = ui_state.camera.focal_plane_depth
-        # Rasterize preset (rt_mode 0)
-        pt.rasterize = (p.rendering.rt_mode == 0)
+        # Rasterize preset (rt_mode 0). The preview always path-traces (that's
+        # the point of the preview button — see start_preview call site), so
+        # while a preview is active/showing its result, keep rasterize forced
+        # off here too; otherwise this per-frame sync stomps the one-shot
+        # override after the first sample.
+        if pt.preview_active or pt.preview_has_result:
+            pt.rasterize = False
+        else:
+            pt.rasterize = (p.rendering.rt_mode == 0)
         pt.ao_enabled = p.optix.ao_enabled
         pt.ao_num_rays = p.optix.ao_num_rays
         pt.ao_radius = p.optix.ao_radius

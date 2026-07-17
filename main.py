@@ -411,8 +411,12 @@ class App:
             pt = self.renderer_host.ensure_optix_for_preview(ui_state)
             self.ui._pathtracer_interface = pt
             if pt is not None:
-                # Sync settings before starting preview
+                # Sync settings before starting preview. The preview always
+                # path-traces, regardless of the Pathtrace Off/rasterize toggle
+                # (mirrors the OpenGL volumetric preview, which has no rasterize
+                # mode) — that's the point of a "pathtrace preview" button.
                 self.renderer_host.sync_optix_prefs(ui_state)
+                pt.rasterize = False
 
                 cam = self.controller_cam
                 width_px, height_px = glfw.get_framebuffer_size(self.window)
