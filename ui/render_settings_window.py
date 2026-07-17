@@ -101,7 +101,7 @@ class RenderSettingsWindowMixin:
             _, b.threshold = imgui.slider_float("Threshold", b.threshold, 0.0, 2.0, format="%.2f")
             if imgui.is_item_hovered():
                 imgui.set_tooltip("Brightness cutoff for bloom extraction.\nLower = more glow everywhere.")
-            _, b.intensity = imgui.slider_float("Intensity", b.intensity, 0.0, 3.0, format="%.2f")
+            _, b.intensity = imgui.slider_float("Bloom intensity", b.intensity, 0.0, 3.0, format="%.2f")
             if imgui.is_item_hovered():
                 imgui.set_tooltip("Strength of the bloom glow.")
             _, b.radius = imgui.slider_float("Radius", b.radius, 0.1, 3.0, format="%.2f")

@@ -49,6 +49,32 @@ class HelpWindowsMixin:
             imgui.bullet_text(f"{self.keybindings.get_key_display_name('randomize_rules')} - Randomize particle behavior + new mutation seed")
             
             imgui.spacing()
+            imgui.text("Gamepad Controls")
+            imgui.separator()
+            imgui.text("Xbox-style controller (auto-detected):")
+            imgui.indent(20)
+            imgui.bullet_text("Left stick - Move camera (forward/back, strafe)")
+            imgui.bullet_text("Right stick - Look around (yaw/pitch)")
+            imgui.bullet_text("Left/Right triggers - Move down/up")
+            imgui.bullet_text("Right bumper (hold) - Move faster")
+            imgui.unindent(20)
+            imgui.text("Buttons:")
+            imgui.indent(20)
+            imgui.bullet_text("A - Cycle realtime RT mode")
+            imgui.bullet_text("B - Pause/resume simulation")
+            imgui.bullet_text("X - Reset particles to Initial Conditions")
+            imgui.bullet_text("Y - Randomize mutation seed")
+            imgui.bullet_text("Start - Reset camera")
+            imgui.bullet_text("Select - Reset accumulation (Accumulate mode)")
+            imgui.unindent(20)
+            imgui.text("D-pad:")
+            imgui.indent(20)
+            imgui.bullet_text("Up - Select particle at screen center (adopt its rule)")
+            imgui.bullet_text("Down - Undo")
+            imgui.bullet_text("Left - Rack focus at screen center")
+            imgui.unindent(20)
+
+            imgui.spacing()
             imgui.text("Slider Tips")
             imgui.separator()
             imgui.bullet_text("Right-click slider - Context menu to adjust range\n (context menu only for Basics/Forces/Advanced)")
@@ -124,19 +150,37 @@ class HelpWindowsMixin:
                 a = self.keybindings.get_key_display_name("camera_left")
                 s = self.keybindings.get_key_display_name("camera_backward")
                 d = self.keybindings.get_key_display_name("camera_right")
-                imgui.bullet_text(f"Move the camera around with {w}{a}{s}{d}.")
+                
                 q = self.keybindings.get_key_display_name("camera_out")
                 e = self.keybindings.get_key_display_name("camera_in")
+                full_reset_binding = self.keybindings.get_key_display_name("randomize_rules")
+                randomize_mutations_binding = self.keybindings.get_key_display_name('randomize_mutations')
+                copy_key = self.keybindings.get_key_display_name('copy_config_with_ctrl')
+                paste_key = self.keybindings.get_key_display_name('paste_config_with_ctrl')
+                
+                imgui.bullet_text(f"Move the camera around with {w}{a}{s}{d}.")
                 imgui.bullet_text(f"Zoom in or out with {q}/{e} or scroll wheel.")
                 imgui.bullet_text(f"Press {self.keybindings.get_key_display_name('reset_keybinding')} to reset the simulation.")
                 imgui.bullet_text(f"Press {self.keybindings.get_key_display_name('toggle_pause')} to toggle pause.")
-                imgui.bullet_text(f"Press {self.keybindings.get_key_display_name('randomize_mutations')} for a fresh crop of mutations.")
-                imgui.separator_text("Particle Selection Mode")
+                imgui.bullet_text(f"Press {randomize_mutations_binding} for a fresh crop of mutations.")
+                imgui.separator_text("Particle Selection")
                 imgui.bullet_text("Click a particle to select it and other\nparticles will copy its behavior (with mutations)")
                 imgui.bullet_text("Right click to go back and undo particle selection")
                 imgui.bullet_text(f"Right click also undos Randomize actions ({self.keybindings.get_key_display_name('randomize_mutations')}/{self.keybindings.get_key_display_name('randomize_rules')})")
                 imgui.separator()
                 imgui.bullet_text(f"Press {self.keybindings.get_key_display_name('toggle_help')} to toggle this Help window.")
+            imgui.spacing()
+            if imgui.collapsing_header("First Steps"):
+                imgui.text_wrapped(
+                    "The main way I use Fluoddity is this:"
+                )
+                imgui.bullet_text("File->Load something interesting")
+                imgui.bullet_text("Set the mutation scale slider medium-low (0.2ish)")
+                imgui.bullet_text("Like something you see? Click on it to see mutations.")
+                imgui.bullet_text(f"Otherwise, reroll mutations with {randomize_mutations_binding}")
+                imgui.bullet_text("Don't be afraid to back up if you get into a dead end.")
+                imgui.bullet_text(f"Set checkpoints with ctrl-{copy_key} and load them with ctrl-{paste_key}!")
+                imgui.bullet_text(f"Start over at any time with random Rule(s) by pressing {full_reset_binding}")
 
             imgui.spacing()
             if imgui.collapsing_header("Rules"):
@@ -156,6 +200,11 @@ class HelpWindowsMixin:
                     f"\nYou can also press Ctrl-{copy_key} to copy a 'save string' to your clipboard, and Ctrl-{paste_key} to load a save string from the clipboard. "
                     "\nSave strings are just text copied your clipboard (typically a couple thousand characters), so they can be easily shared or stashed."
                 )
+                imgui.separator_text("Editor Save/Load")
+                imgui.text_wrapped("Everything outside the physics panel (preferences, render settings, window configuration etc) can be saved and loaded from Editor->Save... "
+                                   "This allows you to create different 'rendering presets' or window layouts."
+            
+                                   )
 
             imgui.spacing()
             if imgui.collapsing_header("Trails"):
@@ -198,15 +247,15 @@ class HelpWindowsMixin:
                 "The options for World size, Physics update Frequency, and motion blur "
                 "can significantly affect performance. World size and update frequency "
                 "trade against each other so if you double one, halve the other for similar performance."
-                "Motion blur gets more expensive with large worldsizes and high frequencies."
+                "Motion blur gets more expensive with high frequencies."
             )
 
             imgui.spacing()
-            imgui.text("Example Setups")
+            imgui.text("Example Setup:")
             imgui.separator()
 
-            imgui.bullet_text("x20 physics frequency with worldsize 0.5, motion blur every 5 frames")
-            imgui.bullet_text("x9 physics frequency with worldsize 1.0, motion blur every 3 frames")
+            imgui.bullet_text("x14 physics frequency with 1 million particles and 196 canvas resolution, No motion blur")
+            imgui.bullet_text("x4 physics frequency with 4 million particles and 256 canvas resolution, No motion blur (Opengl Pathtrace Off only)")
 
             imgui.spacing()
             imgui.text_wrapped(
