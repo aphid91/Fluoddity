@@ -31,7 +31,7 @@ class App:
         # Initialize GLFW
         if not glfw.init():
             raise Exception("GLFW initialization failed")
-        self.window = glfw.create_window(800, 600, "Fluoddity", None, None)
+        self.window = glfw.create_window(1600, 950, "Fluoddity", None, None)
         if not self.window:
             glfw.terminate()
             raise Exception("GLFW window creation failed")
