@@ -86,6 +86,7 @@ class RenderSpecService:
             'stereogram': cam.stereogram,
             'eye_offset': cam.eye_offset,
             'stereo_toe_in': cam.stereo_toe_in,
+            'stereo_wall_eye': cam.stereo_wall_eye,
         }
 
         # 3. Controller cam state (FPS camera)
@@ -271,6 +272,7 @@ class RenderSpecService:
             ui_state.camera.stereogram = cam_data.get('stereogram', False)
             ui_state.camera.eye_offset = cam_data.get('eye_offset', 0.1)
             ui_state.camera.stereo_toe_in = cam_data.get('stereo_toe_in', False)
+            ui_state.camera.stereo_wall_eye = cam_data.get('stereo_wall_eye', False)
 
         # 3. Apply controller cam state (FPS camera)
         ccam_data = spec.controller_cam_state

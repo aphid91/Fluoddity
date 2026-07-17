@@ -171,6 +171,7 @@ class Camera3DPrefs:
     stereogram: bool = False
     eye_offset: float = 0.1
     stereo_toe_in: bool = False
+    stereo_wall_eye: bool = False
 
 
 @dataclass

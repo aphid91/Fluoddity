@@ -190,6 +190,13 @@ class RenderSettingsWindowMixin:
                     cam.stereo_toe_in = True
                 if cam.stereo_toe_in and imgui.is_item_hovered():
                     imgui.set_tooltip("Eyes converge on the Focal Depth plane")
+                mode_label = "Wall-eye" if cam.stereo_wall_eye else "Cross-eye"
+                if imgui.button(f"Current mode: {mode_label}"):
+                    cam.stereo_wall_eye = not cam.stereo_wall_eye
+                if imgui.is_item_hovered():
+                    imgui.set_tooltip(
+                        "Toggle which eye renders on which half of the "
+                        "screen. Some people find wall-eye viewing easier.")
 
     def _render_lighting_section(self):
         """Lighting section — shared LightingPrefs, identical for both renderers.
@@ -387,11 +394,11 @@ class RenderSettingsWindowMixin:
                 imgui.set_tooltip("0 = unbounded (Russian roulette only)")
             _, p.optix.pt_rr_start_depth = imgui.slider_int(
                 "RR Start Depth", p.optix.pt_rr_start_depth, 1, 16)
-            _, p.optix.pt_emission_intensity = imgui.slider_float(
-                "Emission Intensity", p.optix.pt_emission_intensity,
-                0.0, 100.0, format="%.1f")
-            if imgui.is_item_hovered():
-                imgui.set_tooltip("Radiance multiplier for emissive entities (negative hue)")
+            # _, p.optix.pt_emission_intensity = imgui.slider_float(
+            #     "Emission Intensity", p.optix.pt_emission_intensity,
+            #     0.0, 100.0, format="%.1f")
+            # if imgui.is_item_hovered():
+            #     imgui.set_tooltip("Radiance multiplier for emissive entities (negative hue)")
             if rasterize:
                 imgui.end_disabled()
 
@@ -467,8 +474,8 @@ class RenderSettingsWindowMixin:
 
         # ---- Path Trace (Enable SDF moved to the bottom of this section) ----
         if self._persisted_header("Path Trace", "render_group_medium"):
-            _, ti.colored_extinction = imgui.checkbox(
-                "Colored Extinction", ti.colored_extinction)
+            # _, ti.colored_extinction = imgui.checkbox(
+            #     "Colored Extinction", ti.colored_extinction)
             if ti.colored_extinction:
                 _, ti.extinction_rgb = imgui.color_edit3("Albedo RGB", ti.extinction_rgb)
                 _, ti.albedo_saturation = imgui.slider_float(

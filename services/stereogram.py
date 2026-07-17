@@ -32,6 +32,7 @@ class StereoParams:
     eye_offset: float = 0.1      # world units, total inter-eye separation
     toe_in: bool = False         # False = parallel, True = converge on a plane
     convergence: float = 5.0     # distance to convergence plane (toe-in only)
+    wall_eye: bool = False       # False = cross-eye, True = wall-eye (screen halves swapped)
 
 
 @dataclass
@@ -91,7 +92,12 @@ def eye_camera(pos, dir_vec, up, fov, full_width, height, side, params):
     half_w = max(1, full_width // 2)
     aspect = half_w / max(height, 1)
 
-    if side < 0:
+    # wall_eye swaps which screen half each eye draws into (parallax/eye-shift
+    # direction above is unchanged) so cross-eyed viewers can switch to the
+    # wall-eyed (diverging) viewing technique.
+    screen_side = -side if params.wall_eye else side
+
+    if screen_side < 0:
         viewport = (0, 0, half_w, height)                 # left half
     else:
         viewport = (full_width - half_w, 0, half_w, height)  # right half
@@ -117,4 +123,5 @@ def params_from_camera_state(cam):
         eye_offset=getattr(cam, "eye_offset", 0.1),
         toe_in=getattr(cam, "stereo_toe_in", False),
         convergence=getattr(cam, "focal_plane_depth", 5.0),
+        wall_eye=getattr(cam, "stereo_wall_eye", False),
     )

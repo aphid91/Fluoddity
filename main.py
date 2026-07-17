@@ -219,6 +219,7 @@ class App:
         cam.stereogram = prefs.camera3d.stereogram
         cam.eye_offset = prefs.camera3d.eye_offset
         cam.stereo_toe_in = prefs.camera3d.stereo_toe_in
+        cam.stereo_wall_eye = prefs.camera3d.stereo_wall_eye
         # OptiX active is derived each frame from the renderer dropdown.
         cam.optix_enabled = (prefs.rendering.renderer == 1)
 
@@ -843,6 +844,7 @@ class App:
         ui_state.preferences.camera3d.stereogram = cam.stereogram
         ui_state.preferences.camera3d.eye_offset = cam.eye_offset
         ui_state.preferences.camera3d.stereo_toe_in = cam.stereo_toe_in
+        ui_state.preferences.camera3d.stereo_wall_eye = cam.stereo_wall_eye
         # Keep the legacy optix.enabled mirror in sync (renderer enum is the
         # source of truth and persists directly via rendering.renderer).
         ui_state.preferences.optix.enabled = (ui_state.preferences.rendering.renderer == 1)

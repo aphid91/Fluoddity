@@ -663,6 +663,7 @@ class CommandHandler:
         cam.stereogram = p.camera3d.stereogram
         cam.eye_offset = p.camera3d.eye_offset
         cam.stereo_toe_in = p.camera3d.stereo_toe_in
+        cam.stereo_wall_eye = p.camera3d.stereo_wall_eye
 
     def _handle_reset_ui_settings(self, ui_state):
         """Reset all UI settings to factory defaults, then overlay the project's

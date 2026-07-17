@@ -22,6 +22,7 @@ class CameraState:
     stereogram: bool = False       # Side-by-side stereo rendering
     eye_offset: float = 0.1        # Inter-eye separation (world units)
     stereo_toe_in: bool = False    # False = parallel eyes, True = converge (uses focal_plane_depth)
+    stereo_wall_eye: bool = False  # False = cross-eye, True = wall-eye (screen halves swapped)
     optix_enabled: bool = False    # Transient per-frame flag: OptiX active (set from prefs.rendering.renderer; host may clear on failure)
     pathtracer_gas_time_ms: float = 0.0    # Path tracer GAS timing (for UI display)
     pathtracer_render_time_ms: float = 0.0 # Path tracer render timing (for UI display)
