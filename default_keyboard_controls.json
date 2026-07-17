@@ -13,11 +13,11 @@
   "toggle_pause": "SPACE",
   "randomize_mutations": "G",
   "toggle_mouse_mode": "T",
-  "toggle_parameter_sweep": "F",
+  "toggle_parameter_sweep": "N",
   "randomize_rules": "Z",
   "toggle_sidebar": "X",
   "exit_keybinding": "ESCAPE",
   "reset_keybinding": "R",
-  "pick_focal_entity": "N",
+  "pick_focal_entity": "F",
   "cycle_rt_mode": "B"
 }
