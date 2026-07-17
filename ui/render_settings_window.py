@@ -123,6 +123,13 @@ class RenderSettingsWindowMixin:
         labels = ["Pathtrace: Off", f"Pathtrace: {r.rt_samples} spp", "Pathtrace: Accumulate"]
         if imgui.button(labels[r.rt_mode]):
             r.rt_mode = (r.rt_mode + 1) % 3
+        if imgui.is_item_hovered():
+            imgui.set_tooltip(
+                "Toggle between render modes. Off is fastest. In SPP mode, each\n"
+                "frame will be slightly noisy (if using Optix, try the denoiser!).\n"
+                "In Accumulate mode, frames will all blend together, reducing\n"
+                "noise (best when simulation is paused). Moving the camera resets\n"
+                "the accumulation buffer.")
         if show_spp_slider and r.rt_mode == 1:
             imgui.same_line()
             imgui.set_next_item_width(100)
@@ -149,6 +156,10 @@ class RenderSettingsWindowMixin:
         """Firefly Clamp checkbox + max (shared ``rendering.firefly_clamp``)."""
         r = self.state.preferences.rendering
         _, r.firefly_clamp = imgui.checkbox("Firefly Clamp", r.firefly_clamp)
+        if imgui.is_item_hovered():
+            imgui.set_tooltip(
+                "Limits the radiance of any individual sampled pixel, useful\n"
+                "when scenes remain noisy after many samples.")
         if r.firefly_clamp:
             imgui.set_next_item_width(imgui.get_content_region_avail().x)
             _, r.firefly_clamp_max = imgui.drag_float(
@@ -160,36 +171,64 @@ class RenderSettingsWindowMixin:
             cam = self.state.camera
             _, cam.fov = imgui.slider_float(
                 "FOV", cam.fov, 10.0, 95.0, format="%.0f deg")
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(
+                    "Viewing angle in degrees. Strong depth of field tends to\n"
+                    "look better at low values (25ish).")
             _, cam.aperture = imgui.slider_float(
                 "Aperture", cam.aperture, 0.0, 0.15, format="%.3f")
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(
+                    "Controls the strength of the depth-of-field effect. Adjust\n"
+                    "the focal depth until the target is in focus, or hover over\n"
+                    "it and press the focus key.")
             _, cam.focal_plane_depth = imgui.slider_float(
                 "Focal Depth", cam.focal_plane_depth, 0.1, 10.0, format="%.1f")
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(
+                    "Controls the distance at which objects are in focus. Adjust\n"
+                    "until the target is in focus, or hover over it and press the\n"
+                    "focus key.")
             _, cam.move_speed = imgui.slider_float(
-                "Move Speed", cam.move_speed, 0.1, 5.0, format="%.1f")
+                "Controller Move Speed", cam.move_speed, 0.1, 5.0, format="%.1f")
+            if imgui.is_item_hovered():
+                imgui.set_tooltip("How fast does the controller move the camera?")
             _, cam.rotate_speed = imgui.slider_float(
                 "Rotate Speed", cam.rotate_speed, 0.1, 5.0, format="%.1f")
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(
+                    "How fast does the camera orbit / how sensitive is the\n"
+                    "controller Look?")
             changed, values = imgui.drag_float3(
                 "Orbit Center", list(cam.orbit_center), 0.01, format="%.2f")
+            if imgui.is_item_hovered():
+                imgui.set_tooltip("Where does the camera orbit when moved with WASD?")
             if changed:
                 cam.orbit_center[0], cam.orbit_center[1], cam.orbit_center[2] = values
                 if self.tracer_controller_cam is not None:
                     sync_orbit_angles_from_camera(cam, self.tracer_controller_cam)
             _, cam.orbit_rate = imgui.slider_float(
                 "Orbit Rate", cam.orbit_rate, -0.02, 0.02, format="%.4f")
+            if imgui.is_item_hovered():
+                imgui.set_tooltip("Automatic rotation for lazy-Susan video recording.")
 
             imgui.separator()
             _, cam.stereogram = imgui.checkbox("Stereogram", cam.stereogram)
+            if imgui.is_item_hovered():
+                imgui.set_tooltip("Enable Stereo mode for full 3D cross-eye viewing.")
             if cam.stereogram:
                 _, cam.eye_offset = imgui.slider_float(
                     "Eye Offset", cam.eye_offset, 0.0, 0.5, format="%.3f")
                 # Parallel vs Toe-in convergence toggle
                 if imgui.radio_button("Parallel", not cam.stereo_toe_in):
                     cam.stereo_toe_in = False
+                if imgui.is_item_hovered():
+                    imgui.set_tooltip("Both eyes look straight ahead.")
                 imgui.same_line()
                 if imgui.radio_button("Toe-in", cam.stereo_toe_in):
                     cam.stereo_toe_in = True
-                if cam.stereo_toe_in and imgui.is_item_hovered():
-                    imgui.set_tooltip("Eyes converge on the Focal Depth plane")
+                if imgui.is_item_hovered():
+                    imgui.set_tooltip("Eyes converge on the Focal Depth plane.")
                 mode_label = "Wall-eye" if cam.stereo_wall_eye else "Cross-eye"
                 if imgui.button(f"Current mode: {mode_label}"):
                     cam.stereo_wall_eye = not cam.stereo_wall_eye
@@ -243,8 +282,8 @@ class RenderSettingsWindowMixin:
                 "Photosphere", lit.photosphere)
             if imgui.is_item_hovered():
                 imgui.set_tooltip(
-                    "Use equirectangular environment map for the sky\n"
-                    "(queried on primary-ray miss, i.e. the background).")
+                    "Replaces the skybox with a photosphere loaded from:\n"
+                    "volrender/textures/skybox.jpg")
             # On the OpenGL side the photosphere needs its skybox texture loaded.
             if (changed_photo and lit.photosphere
                     and self.state.preferences.rendering.renderer == 0):
@@ -316,7 +355,7 @@ class RenderSettingsWindowMixin:
         # ---- Geometry ----
         if self._persisted_header("Geometry", "render_group_geometry"):
             _, p.optix.sphere_radius_scale = imgui.slider_float(
-                "Sphere Scale", p.optix.sphere_radius_scale,
+                "Particle Size", p.optix.sphere_radius_scale,
                 0.1, 10.0, format="%.1fx")
             if not p.optix.use_curves:
                 _, p.optix.sphere_size_jitter = imgui.slider_float(
@@ -332,11 +371,15 @@ class RenderSettingsWindowMixin:
                 _, p.optix.curve_length = imgui.slider_float(
                     "Curve Length", p.optix.curve_length, 0.0, 10.0, format="%.2f")
                 _, p.optix.curve_r0 = imgui.slider_float(
-                    "Curve R0", p.optix.curve_r0, 0.01, 5.0, format="%.2f")
+                    "Tip Radius", p.optix.curve_r0, 0.01, 5.0, format="%.2f")
                 _, p.optix.curve_r1 = imgui.slider_float(
-                    "Curve R1", p.optix.curve_r1, 0.01, 5.0, format="%.2f")
+                    "Base Radius", p.optix.curve_r1, 0.01, 5.0, format="%.2f")
 
             _, p.optix.sdf_enabled = imgui.checkbox("Enable Dish", p.optix.sdf_enabled)
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(
+                    "Adds a curved plate near the ground plane with which\n"
+                    "particles can collide.")
 
         # ---- Material (moved to between Geometry and Lighting) ----
         if self._persisted_header("Material", "render_group_material"):
@@ -379,8 +422,14 @@ class RenderSettingsWindowMixin:
             if p.optix.ao_enabled:
                 _, p.optix.ao_num_rays = imgui.slider_int(
                     "AO Rays", p.optix.ao_num_rays, 1, 16)
+                if imgui.is_item_hovered():
+                    imgui.set_tooltip(
+                        "Determines the number of short ambient occlusion rays to launch.")
                 _, p.optix.ao_radius = imgui.slider_float(
                     "AO Radius", p.optix.ao_radius, 0.01, 5.0, format="%.2f")
+                if imgui.is_item_hovered():
+                    imgui.set_tooltip(
+                        "Determines the range over which ambient occlusion is estimated.")
             if not rasterize:
                 imgui.end_disabled()
 
@@ -394,6 +443,9 @@ class RenderSettingsWindowMixin:
                 imgui.set_tooltip("0 = unbounded (Russian roulette only)")
             _, p.optix.pt_rr_start_depth = imgui.slider_int(
                 "RR Start Depth", p.optix.pt_rr_start_depth, 1, 16)
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(
+                    "How many bounces are guaranteed before russian roulette begins?")
             # _, p.optix.pt_emission_intensity = imgui.slider_float(
             #     "Emission Intensity", p.optix.pt_emission_intensity,
             #     0.0, 100.0, format="%.1f")
@@ -408,8 +460,16 @@ class RenderSettingsWindowMixin:
 
             _, p.optix.pt_denoise_enabled = imgui.checkbox(
                 "Denoise (path trace)", p.optix.pt_denoise_enabled)
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(
+                    "Apply Optix AI denoiser to finished frames.\n"
+                    "(Can be a little expensive at high resolution.)")
             _, p.optix.rz_denoise_enabled = imgui.checkbox(
                 "Denoise (rasterize)", p.optix.rz_denoise_enabled)
+            if imgui.is_item_hovered():
+                imgui.set_tooltip(
+                    "Apply Optix AI denoiser to finished frames.\n"
+                    "(Can be a little expensive at high resolution.)")
 
             self._render_bloom_controls()
 
@@ -510,22 +570,18 @@ class RenderSettingsWindowMixin:
         self._render_sky_section()
 
         # ---- Grid Resolutions (between Sky and Post Process; collapsed) ----
+        # One "Voxel Resolution" slider drives the density and color grids;
+        # the majorant grid is derived (min(6, voxel - 2)).
         if self._persisted_header("Grid Resolutions", "render_group_grid_resolutions"):
-            _, ti.density_resolution_log2 = imgui.slider_int(
-                "Density (2^n)", ti.density_resolution_log2, 5, 10)
+            _, voxel = imgui.slider_int(
+                "Voxel Resolution (2^n)", ti.density_resolution_log2, 5, 10)
             if imgui.is_item_hovered():
-                d = 2 ** ti.density_resolution_log2
-                imgui.set_tooltip(f"{d}x{d}x{d}  ({d**3 * 4 / 1024**2:.0f} MB)")
-            _, ti.color_resolution_log2 = imgui.slider_int(
-                "Color (2^n)", ti.color_resolution_log2, 5, 10)
-            if imgui.is_item_hovered():
-                c = 2 ** ti.color_resolution_log2
-                imgui.set_tooltip(f"{c}x{c}x{c}  ({c**3 * 4 * 2 / 1024**2:.0f} MB, 2 channels)")
-            _, ti.majorant_resolution_log2 = imgui.slider_int(
-                "Majorant (2^n)", ti.majorant_resolution_log2, 3, 8)
-            if imgui.is_item_hovered():
-                m = 2 ** ti.majorant_resolution_log2
-                imgui.set_tooltip(f"{m}x{m}x{m}")
+                imgui.set_tooltip(
+                    "EXPENSIVE: Determines the size of the finest details that "
+                    "can be rendered by the path tracer")
+            ti.density_resolution_log2 = voxel
+            ti.color_resolution_log2 = voxel
+            ti.majorant_resolution_log2 = min(6, voxel - 2)
             d = 2 ** ti.density_resolution_log2
             c = 2 ** ti.color_resolution_log2
             m = 2 ** ti.majorant_resolution_log2
