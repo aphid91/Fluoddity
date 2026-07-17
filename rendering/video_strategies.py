@@ -137,28 +137,39 @@ class TracerVideoStrategy:
         self.init_frame_state()
 
     def init_frame_state(self):
-        self._samples_done = 0
         self._frame_started = False
         self._physics_steps_done = 0
-        self._schedule = []
+        self._slot_index = 0            # Next cadence slot to sample.
+        self._slot_samples_done = 0     # Samples accumulated at current slot.
+        self._plan = None               # CapturePlan for this output frame.
 
     def run_frame(self, ui_state):
+        from .capture_cadence import build_capture_plan
+
         c = self.ctx
         ti = self.ti
-        spp = ti.num_samples
-        physics_rate = ui_state.preferences.recording.motion_blur_samples
+        rec = ui_state.preferences.recording
 
         # --- Start a new output frame if needed ---
         if not self._frame_started:
-            # Distribute physics_rate steps as evenly as possible across spp
-            # samples; schedule[i] = total steps that must run before sample i.
-            self._schedule = []
-            for i in range(spp):
-                self._schedule.append(((i + 1) * physics_rate) // spp)
-            self._schedule[0] = max(self._schedule[0], 1)
+            # Cadence-lock plan shared with the OptiX backend. Capture SPP is
+            # authoritative for the total sample count; Blur Quality only sets
+            # which physics frames are eligible to be sampled.
+            self._plan = build_capture_plan(
+                physics_rate=rec.motion_blur_samples,
+                capture_spp=ti.num_samples,
+                blur_quality=rec.recording_blur_quality,
+                motion_blur=rec.recording_motion_blur,
+            )
+            self._slot_index = 0
+            self._slot_samples_done = 0
+            self._physics_steps_done = 0
 
-            # Initial physics step
-            c.run_physics_step(ui_state, 0)
+            # Advance physics to the first cadence slot.
+            first_slot = self._plan.slots[0]
+            while self._physics_steps_done < first_slot.physics_before:
+                c.run_physics_step(ui_state, self._physics_steps_done)
+                self._physics_steps_done += 1
 
             view_proj = c.compute_view_proj()
             width, height = glfw.get_framebuffer_size(c.window)
@@ -192,21 +203,38 @@ class TracerVideoStrategy:
                 stereo_eyes=stereo_eyes,
             )
             self._frame_started = True
-            self._samples_done = 0
-            self._physics_steps_done = 1
+            # Physics is already at the first slot; sampling begins there.
 
-        # --- Run any physics steps needed before this sample ---
-        target_steps = self._schedule[self._samples_done]
-        while self._physics_steps_done < target_steps:
+        # --- Advance physics to the current cadence slot (if not already) ---
+        slot = self._plan.slots[self._slot_index]
+        while self._physics_steps_done < slot.physics_before:
             c.run_physics_step(ui_state, self._physics_steps_done)
             self._physics_steps_done += 1
             # Re-splat entities with updated positions (keeps accumulation)
             view_proj = c.compute_view_proj()
             ti.re_splat(c.sim.get_entity_buffer(), c.sim.entity_count, view_proj)
 
-        # --- Accumulate 1 SPP ---
+        # --- Is this the final sample of the output frame? If so, run out any
+        # remaining physics first so the frame advances exactly physics_rate
+        # steps (playback-speed lock) — tick_video resolves on the last sample. ---
+        is_last_slot = (self._slot_index == len(self._plan.slots) - 1)
+        is_last_sample = (is_last_slot
+                          and self._slot_samples_done == slot.samples - 1)
+        if is_last_sample:
+            while self._physics_steps_done < self._plan.total_physics:
+                c.run_physics_step(ui_state, self._physics_steps_done)
+                self._physics_steps_done += 1
+                view_proj = c.compute_view_proj()
+                ti.re_splat(c.sim.get_entity_buffer(), c.sim.entity_count,
+                            view_proj)
+
+        # --- Accumulate 1 SPP at this slot ---
         frame_complete = ti.tick_video()
-        self._samples_done += 1
+        self._slot_samples_done += 1
+        if self._slot_samples_done >= slot.samples:
+            # Move to the next cadence slot on the following calls.
+            self._slot_index += 1
+            self._slot_samples_done = 0
 
         if frame_complete:
             # Match the shared tonemap curve used by the other backends.
@@ -229,10 +257,9 @@ class OptixPtVideoStrategy:
 
     def init_frame_state(self):
         self._frame_started = False
-        self._substeps_done = 0
-        self._physics_steps_done = 0
-        self._total_substeps = 0
-        self._physics_per_substep = 0
+        self._slot_index = 0          # Next cadence slot to sample this frame.
+        self._physics_steps_done = 0  # Physics steps run so far this frame.
+        self._plan = None             # CapturePlan for the current output frame.
         # Per-output-frame stereo plan: list of eye dicts, or None (mono).
         self._eyes = None
         self._full_width = 0
@@ -273,66 +300,79 @@ class OptixPtVideoStrategy:
                              width=vp[2], height=vp[3], viewport=vp))
         return eyes
 
+    def _advance_physics_to(self, ui_state, target_steps):
+        """Run physics steps until this frame has advanced ``target_steps``."""
+        while self._physics_steps_done < target_steps:
+            self.ctx.run_physics_step(ui_state, self._physics_steps_done)
+            self._physics_steps_done += 1
+
+    def _accumulate_slot(self, slot):
+        """Trace ``slot.samples`` SPP for every eye at the current particle
+        state, in one offline_substep call per eye (single GAS build). The
+        renderer normalizes by the actual accumulated sample count, so a
+        variable number of samples per slot integrates correctly."""
+        for eye in self._eyes:
+            self.pt.offline_substep(
+                eye['pos'], eye['dir'], eye['up'], eye['fov'],
+                accum_slot=eye['slot'], spp=slot.samples)
+
     def run_frame(self, ui_state):
+        from .capture_cadence import build_capture_plan
+
         c = self.ctx
         pt = self.pt
-        capture_spp = ui_state.preferences.rendering.capture_spp
-        physics_rate = ui_state.preferences.recording.motion_blur_samples
-
-        if ui_state.preferences.recording.recording_motion_blur:
-            blur_quality = ui_state.preferences.recording.recording_blur_quality
-            total_substeps = max(1, physics_rate // max(blur_quality, 1))
-            physics_per_substep = blur_quality
-        else:
-            total_substeps = 1
-            physics_per_substep = physics_rate
-
-        spp_per_substep = max(1, capture_spp // max(total_substeps, 1))
+        rec = ui_state.preferences.recording
+        plan = build_capture_plan(
+            physics_rate=rec.motion_blur_samples,
+            capture_spp=ui_state.preferences.rendering.capture_spp,
+            blur_quality=rec.recording_blur_quality,
+            motion_blur=rec.recording_motion_blur,
+        )
 
         # --- Start a new output frame if needed ---
         if not self._frame_started:
-            self._total_substeps = total_substeps
-            self._physics_per_substep = physics_per_substep
+            self._plan = plan
+            self._physics_steps_done = 0
 
-            for i in range(physics_per_substep):
-                c.run_physics_step(ui_state, i)
+            first_slot = plan.slots[0]
+            # Advance physics to the first cadence slot so entities have moved.
+            self._advance_physics_to(ui_state, first_slot.physics_before)
 
             # Lock in the eye plan (mono or stereo) for this whole output frame.
             self._eyes = self._build_eyes(ui_state)
 
-            # Begin an offline accumulation per eye (each in its own slot), then
-            # trace the first substep for every eye at the same particle state.
+            # Begin an offline accumulation per eye (each in its own slot). We
+            # drive sampling one SPP at a time, so spp_per_substep is 1; the
+            # total sample count is governed by the CapturePlan, not by
+            # total_substeps * spp_per_substep.
             for eye in self._eyes:
                 pt.start_offline_render(
                     entity_buffer=c.sim.get_entity_buffer(),
                     entity_count=c.sim.entity_count,
                     width=eye['width'],
                     height=eye['height'],
-                    total_substeps=total_substeps,
-                    spp_per_substep=spp_per_substep,
+                    total_substeps=len(plan.slots),
+                    spp_per_substep=1,
                     accum_slot=eye['slot'],
                 )
-            for eye in self._eyes:
-                pt.offline_substep(eye['pos'], eye['dir'], eye['up'], eye['fov'],
-                                   accum_slot=eye['slot'])
+            self._accumulate_slot(first_slot)
 
             self._frame_started = True
-            self._substeps_done = 1
-            self._physics_steps_done = physics_per_substep
+            self._slot_index = 1
             return None
 
-        # --- Subsequent substeps: physics step(s) + offline_substep per eye ---
-        if self._substeps_done < self._total_substeps:
-            for i in range(self._physics_per_substep):
-                c.run_physics_step(ui_state, self._physics_steps_done)
-                self._physics_steps_done += 1
-            for eye in self._eyes:
-                pt.offline_substep(eye['pos'], eye['dir'], eye['up'], eye['fov'],
-                                   accum_slot=eye['slot'])
-            self._substeps_done += 1
+        # --- Subsequent cadence slots: advance physics, then accumulate ---
+        if self._slot_index < len(self._plan.slots):
+            slot = self._plan.slots[self._slot_index]
+            self._advance_physics_to(ui_state, slot.physics_before)
+            self._accumulate_slot(slot)
+            self._slot_index += 1
             return None
 
-        # --- All substeps done: finish each eye and (if stereo) composite ---
+        # --- All slots sampled: run out the remaining physics so this output
+        # frame always advances exactly physics_rate steps (playback-speed lock),
+        # then finish each eye and (if stereo) composite. ---
+        self._advance_physics_to(ui_state, self._plan.total_physics)
         eyes = self._eyes
         self._frame_started = False
 

@@ -123,13 +123,11 @@ class RecordingController:
                 # Build OptiX path tracer offline video strategy
                 self.active_video_strategy = sim_runner.make_optix_pt_video_strategy(
                     pathtracer_interface)
-            elif (optix_active
-                  and rt_mode == 0
-                  and pathtracer_interface is not None):
-                # Rasterize mode: override AO rays with Capture SPP for a
-                # high-quality AO term during video capture.
-                st.saved_ao_num_rays = p.optix.ao_num_rays
-                p.optix.ao_num_rays = p.rendering.capture_spp
+            # Rasterize / RT-off mode needs no per-start override: Capture SPP
+            # now caps the temporal motion-blur samples (applied in
+            # SimulationRunner via the shared cadence-lock scheduler), and AO
+            # rays keep coming from the user's own AO Rays slider (pushed each
+            # frame by rendering.host).
         elif not is_recording and st.was_recording:
             p.rendering.speedmult = st.user_speedmult
             p.rendering.motion_blur = st.user_motion_blur
@@ -139,10 +137,6 @@ class RecordingController:
             # Invalidate cached texture — the image pipeline recreates resources
             # when total_samples changes, releasing the old texture
             self.camera.assembled_texture = None
-            # Restore AO rays if we overrode them
-            if st.saved_ao_num_rays is not None:
-                p.optix.ao_num_rays = st.saved_ao_num_rays
-                st.saved_ao_num_rays = None
             # Pause simulation when recording ended by reaching max_frames
             if self.video_service.finished_naturally():
                 on_finished_naturally(ui_state)

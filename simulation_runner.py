@@ -135,35 +135,66 @@ class SimulationRunner:
     def _run_with_motion_blur(self, ui_state, speedmult,
                                assemble_kwargs,
                                skip_view_generation=False):
-        """Motion blur path: temporal accumulation with multiple render calls."""
+        """Motion blur path: temporal accumulation with multiple render calls.
+
+        Uses the shared cadence-lock scheduler so the rasterize / RT-off path
+        obeys the same capture contract as the traced backends: Capture SPP
+        caps the total temporal samples, Blur Quality sets which physics frames
+        are eligible (the stride), and the frame always advances the full
+        physics span (``speedmult``) so playback speed stays locked. Each
+        eligible slot may carry more than one sample when Capture SPP exceeds
+        the eligible-slot count — the extra samples denoise the AO term (each
+        render_frame re-samples AO with fresh rng).
+        """
+        from rendering.capture_cadence import build_capture_plan
+
         if self.plotting_manager is not None:
             self.plotting_manager.pre_physics_frame(self.sim.entity_update_program)
 
-        motion_blur_render_cadence = ui_state.preferences.rendering.blur_quality
-        total_render_samples = (speedmult + motion_blur_render_cadence - 1) // motion_blur_render_cadence
+        rec = ui_state.preferences.recording
+        # During recording, Capture SPP is authoritative for the sample count.
+        # Outside recording (interactive motion blur), no Capture-SPP cap makes
+        # sense, so fall back to one sample per eligible slot.
+        recording = self.video_service.is_active()
+        capture_spp = (ui_state.preferences.rendering.capture_spp if recording
+                       else max(1, speedmult // max(rec.recording_blur_quality, 1)))
+
+        plan = build_capture_plan(
+            physics_rate=speedmult,
+            capture_spp=capture_spp,
+            blur_quality=ui_state.preferences.rendering.blur_quality,
+            motion_blur=True,
+        )
+
+        physics_done = 0
         render_sample_index = 0
-
-        for step in range(speedmult):
-            self._run_physics_step(ui_state, step)
-            if self.plotting_manager is not None:
-                self.plotting_manager.notify_physics_step()
-
-            # Only render on frames matching the blur quality cadence
-            if step % motion_blur_render_cadence != 0:
-                continue
+        for slot in plan.slots:
+            # Advance physics to this cadence slot.
+            while physics_done < slot.physics_before:
+                self._run_physics_step(ui_state, physics_done)
+                if self.plotting_manager is not None:
+                    self.plotting_manager.notify_physics_step()
+                physics_done += 1
 
             if not skip_view_generation:
-                raw_view_tex = self.camera.generate_view_texture()
+                for _ in range(slot.samples):
+                    raw_view_tex = self.camera.generate_view_texture()
+                    assembled_tex = self.camera.image_pipeline.assemble_frame(
+                        raw_view_tex,
+                        total_samples=plan.total_samples,
+                        current_sample_index=render_sample_index,
+                        **assemble_kwargs
+                    )
+                    render_sample_index += 1
+                    self._process_assembled_frame(assembled_tex, ui_state)
 
-                assembled_tex = self.camera.image_pipeline.assemble_frame(
-                    raw_view_tex,
-                    total_samples=total_render_samples,
-                    current_sample_index=render_sample_index,
-                    **assemble_kwargs
-                )
-                render_sample_index += 1
-
-                self._process_assembled_frame(assembled_tex, ui_state)
+        # Run out any remaining physics so the frame advances the full span
+        # (playback-speed lock), matching the traced backends.
+        while physics_done < plan.total_physics:
+            self._run_physics_step(ui_state, physics_done)
+            if self.plotting_manager is not None:
+                self.plotting_manager.notify_physics_step()
+            physics_done += 1
 
         if self.plotting_manager is not None:
             self.plotting_manager.post_assembly_frame()

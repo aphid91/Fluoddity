@@ -14,4 +14,3 @@ class RecordingState:
     user_speedmult: int = 1               # Saved speedmult to restore after recording
     user_motion_blur: bool = True         # Saved motion-blur toggle to restore
     user_blur_quality: int = 1            # Saved blur quality to restore
-    saved_ao_num_rays: int | None = None  # Saved AO rays during rasterize-mode video (None = not overridden)

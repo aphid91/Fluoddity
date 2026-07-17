@@ -701,6 +701,7 @@ class PathTracerInterface:
         cam_up: np.ndarray,
         fov: float,
         accum_slot: int = 0,
+        spp: int | None = None,
     ) -> None:
         """Trace one temporal sub-step of an offline motion-blur render.
 
@@ -741,6 +742,7 @@ class PathTracerInterface:
             eye, U, V, W,
             radius_scale=self.radius_scale,
             accum_slot=accum_slot,
+            spp=spp,
             sun_direction=sun_dir_norm,
             sun_intensity=self.sun_intensity,
             sun_color=self.sun_color,

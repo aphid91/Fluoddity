@@ -1960,8 +1960,13 @@ class PathTracerRenderer:
 
     def render_offline_substep(self, eye, U, V, W,
                                radius_scale=1.0, accum_slot=0,
-                               **render_kwargs):
-        """Trace spp_per_substep samples for one temporal sub-step.
+                               spp=None, **render_kwargs):
+        """Trace samples for one temporal sub-step.
+
+        By default traces ``spp_per_substep`` samples (set in
+        render_offline_begin). Pass ``spp`` to override the count for this
+        substep — used by the cadence-lock scheduler, which places a variable
+        number of samples on each cadence slot while building the GAS only once.
 
         The caller must update entity positions (via physics step) and
         ensure the entity buffer reflects the new state BEFORE calling.
@@ -2011,11 +2016,12 @@ class PathTracerRenderer:
             # raygen skips guide writes, keeping a single coherent snapshot
             # for the denoiser.
             first_substep = (self._offline_substeps_done == 0)
+            n_spp = self._offline_spp_per_substep if spp is None else max(1, spp)
 
             check_cuda(cudart.cudaEventRecord(
                 self._evt_render_start, self._stream_obj))
 
-            for i in range(self._offline_spp_per_substep):
+            for i in range(n_spp):
                 self._fill_params_and_launch(
                     entities_ptr, w, h, eye, U, V, W,
                     write_guides=(self._offline_denoise
