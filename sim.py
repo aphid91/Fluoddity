@@ -33,6 +33,12 @@ class Sim:
         self._pending_rule_buffer_update = False  # Set true to trigger rule buffer write next frame
         self._pending_entity_id = None  # Entity ID to read back after rule buffer is written
 
+        # Frame-constant entity uniforms only change when state does. apply_state()
+        # (once per rendered frame) marks them dirty; entity_update() re-uploads them
+        # on the next step and clears the flag, so the ~35 physics-setting tryset()
+        # calls run once/frame instead of once/physics-step (speedmult x savings).
+        self._entity_uniforms_dirty = True
+
     def get_entity_count(self) -> int:
         """Calculate entity count based on world size."""
         return int(600000 * self.world_size)
@@ -164,55 +170,66 @@ class Sim:
         '''
         Run a single physics update on all particles
         '''
+        # --- Per-step uniforms (genuinely change every physics step) ---
         tryset(self.entity_update_program, 'frame_count', self.frame_count)
-        tryset(self.entity_update_program, 'canvas', 1)
-        tryset(self.entity_update_program, 'WORLD_SIZE', self.world_size)
-
-        # Advanced drawing field texture
-        tryset(self.entity_update_program, 'field_texture', 5)
-        tryset(self.entity_update_program, 'advanced_drawing_resources_initialized', field_texture_bound)
-        tryset(self.entity_update_program, 'force_field_strength', force_field_strength)
-        tryset(self.entity_update_program, 'strafe_field_strength', strafe_field_strength)
-
         # Only write rules to buffer when explicitly requested (avoids 192MB/frame cost)
         tryset(self.entity_update_program, 'WRITE_RULES', self._pending_rule_buffer_update)
 
-        # Multi-load mode: set uniform arrays for all loaded configs
-        if multi_load_service and multi_load_service.is_active() and not is_preview_active:
+        multi_load_active = (multi_load_service and multi_load_service.is_active()
+                             and not is_preview_active)
+
+        # Multi-load progress advances every step, so its uniforms refresh per step.
+        # (The expensive SSBO write inside is already guarded by its own dirty flag.)
+        if multi_load_active:
             self._set_multi_load_uniforms(multi_load_service)
-        
-        # Normal mode: set single config uniforms
-        else:
-            tryset(self.entity_update_program, 'MULTILOAD_COUNT', 0)
-            self._assign_physics_setting('AXIAL_FORCE_SETTING', self._state.AXIAL_FORCE, 'Axial Force', 'AXIAL_FORCE', -1.0, 1.0)
-            self._assign_physics_setting('LATERAL_FORCE_SETTING', self._state.LATERAL_FORCE, 'Lateral Force', 'LATERAL_FORCE', -1.0, 1.0)
-            self._assign_physics_setting('SENSOR_GAIN_SETTING', self._state.SENSOR_GAIN, 'Sensor Gain', 'SENSOR_GAIN', 0.0, 5.0)
-            self._assign_physics_setting('MUTATION_SCALE_SETTING', self._state.MUTATION_SCALE, 'Mutation Scale', 'MUTATION_SCALE', -0.5, 0.5)
-            self._assign_physics_setting('DRAG_SETTING', self._state.DRAG, 'Drag', 'DRAG', -1.0, 1.0)
-            self._assign_physics_setting('STRAFE_POWER_SETTING', self._state.STRAFE_POWER, 'Strafe Power', 'STRAFE_POWER', 0.0, 0.5)
-            self._assign_physics_setting('SENSOR_ANGLE_SETTING', self._state.SENSOR_ANGLE, 'Sensor Angle', 'SENSOR_ANGLE', -1.0, 1.0)
-            self._assign_physics_setting('GLOBAL_FORCE_MULT_SETTING', self._state.GLOBAL_FORCE_MULT, 'Global Force Mult', 'GLOBAL_FORCE_MULT', 0.0, 2.0)
-            self._assign_physics_setting('SENSOR_DISTANCE_SETTING', self._state.SENSOR_DISTANCE, 'Sensor Distance', 'SENSOR_DISTANCE', 0.0, 4.0)
-            tryset(self.entity_update_program, 'DISABLE_SYMMETRY', self._state.DISABLE_SYMMETRY)
-            tryset(self.entity_update_program, 'ABSOLUTE_ORIENTATION', self._state.ABSOLUTE_ORIENTATION)
-            tryset(self.entity_update_program, 'ORIENTATION_MIX', self._state.ORIENTATION_MIX)
-            # Rule seed from sim state (saved with physics configs)
-            tryset(self.entity_update_program, 'RULE_SEED', self._state.rule_seed)
-        
-        #both modes: set global and conditionally global uniforms
-        tryset(self.entity_update_program, 'BOUNDARY_CONDITIONS_MODE', self._state.boundary_conditions)
-        tryset(self.entity_update_program, 'RESET_MODE', self._state.initial_conditions)
-        tryset(self.entity_update_program, 'COHORTS', self._state.num_cohorts)
-        self._assign_physics_setting('HAZARD_RATE_SETTING', self._state.HAZARD_RATE, 'Hazard Rate', 'HAZARD_RATE', 0.0, 0.05)
 
-        # Appearance settings from sim state (now part of physics config)
-        tryset(self.entity_update_program, 'HUE_SENSITIVITY', self._state.hue_sensitivity)
-        tryset(self.entity_update_program, 'COLOR_BY_COHORT', self._state.color_by_cohort)
+        # --- Frame-constant uniforms: upload once per frame, not once per step ---
+        # These derive from self._state / the frame's args, which don't change across
+        # the speedmult physics steps in a rendered frame. apply_state() sets the flag.
+        if self._entity_uniforms_dirty:
+            tryset(self.entity_update_program, 'canvas', 1)
+            tryset(self.entity_update_program, 'WORLD_SIZE', self.world_size)
 
-        # Generic scratch uniforms for live-coding
-        if generics is not None:
-            tryset(self.entity_update_program, 'generic03', generics[0:4])
-            tryset(self.entity_update_program, 'generic47', generics[4:8])
+            # Advanced drawing field texture
+            tryset(self.entity_update_program, 'field_texture', 5)
+            tryset(self.entity_update_program, 'advanced_drawing_resources_initialized', field_texture_bound)
+            tryset(self.entity_update_program, 'force_field_strength', force_field_strength)
+            tryset(self.entity_update_program, 'strafe_field_strength', strafe_field_strength)
+
+            # Normal mode: set single config uniforms (multi-load handled above per-step)
+            if not multi_load_active:
+                tryset(self.entity_update_program, 'MULTILOAD_COUNT', 0)
+                self._assign_physics_setting('AXIAL_FORCE_SETTING', self._state.AXIAL_FORCE, 'Axial Force', 'AXIAL_FORCE', -1.0, 1.0)
+                self._assign_physics_setting('LATERAL_FORCE_SETTING', self._state.LATERAL_FORCE, 'Lateral Force', 'LATERAL_FORCE', -1.0, 1.0)
+                self._assign_physics_setting('SENSOR_GAIN_SETTING', self._state.SENSOR_GAIN, 'Sensor Gain', 'SENSOR_GAIN', 0.0, 5.0)
+                self._assign_physics_setting('MUTATION_SCALE_SETTING', self._state.MUTATION_SCALE, 'Mutation Scale', 'MUTATION_SCALE', -0.5, 0.5)
+                self._assign_physics_setting('DRAG_SETTING', self._state.DRAG, 'Drag', 'DRAG', -1.0, 1.0)
+                self._assign_physics_setting('STRAFE_POWER_SETTING', self._state.STRAFE_POWER, 'Strafe Power', 'STRAFE_POWER', 0.0, 0.5)
+                self._assign_physics_setting('SENSOR_ANGLE_SETTING', self._state.SENSOR_ANGLE, 'Sensor Angle', 'SENSOR_ANGLE', -1.0, 1.0)
+                self._assign_physics_setting('GLOBAL_FORCE_MULT_SETTING', self._state.GLOBAL_FORCE_MULT, 'Global Force Mult', 'GLOBAL_FORCE_MULT', 0.0, 2.0)
+                self._assign_physics_setting('SENSOR_DISTANCE_SETTING', self._state.SENSOR_DISTANCE, 'Sensor Distance', 'SENSOR_DISTANCE', 0.0, 4.0)
+                tryset(self.entity_update_program, 'DISABLE_SYMMETRY', self._state.DISABLE_SYMMETRY)
+                tryset(self.entity_update_program, 'ABSOLUTE_ORIENTATION', self._state.ABSOLUTE_ORIENTATION)
+                tryset(self.entity_update_program, 'ORIENTATION_MIX', self._state.ORIENTATION_MIX)
+                # Rule seed from sim state (saved with physics configs)
+                tryset(self.entity_update_program, 'RULE_SEED', self._state.rule_seed)
+
+            #both modes: set global and conditionally global uniforms
+            tryset(self.entity_update_program, 'BOUNDARY_CONDITIONS_MODE', self._state.boundary_conditions)
+            tryset(self.entity_update_program, 'RESET_MODE', self._state.initial_conditions)
+            tryset(self.entity_update_program, 'COHORTS', self._state.num_cohorts)
+            self._assign_physics_setting('HAZARD_RATE_SETTING', self._state.HAZARD_RATE, 'Hazard Rate', 'HAZARD_RATE', 0.0, 0.05)
+
+            # Appearance settings from sim state (now part of physics config)
+            tryset(self.entity_update_program, 'HUE_SENSITIVITY', self._state.hue_sensitivity)
+            tryset(self.entity_update_program, 'COLOR_BY_COHORT', self._state.color_by_cohort)
+
+            # Generic scratch uniforms for live-coding
+            if generics is not None:
+                tryset(self.entity_update_program, 'generic03', generics[0:4])
+                tryset(self.entity_update_program, 'generic47', generics[4:8])
+
+            self._entity_uniforms_dirty = False
 
         num_workgroups = (self.entity_count + 63) // 64
         ctx.memory_barrier()
@@ -398,6 +415,8 @@ class Sim:
     def apply_state(self, state: SimState) -> None:
         """Apply state from Orchestrator before update."""
         self._state = state
+        # New state -> frame-constant entity uniforms need re-uploading once this frame.
+        self._entity_uniforms_dirty = True
         # Update view_tex based on current_view_option
         if state.current_view_option < len(self.view_options):
             self.view_tex = self.view_options[state.current_view_option]
