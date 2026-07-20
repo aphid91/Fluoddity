@@ -33,11 +33,13 @@ class Sim:
         self._pending_rule_buffer_update = False  # Set true to trigger rule buffer write next frame
         self._pending_entity_id = None  # Entity ID to read back after rule buffer is written
 
-        # Frame-constant entity uniforms only change when state does. apply_state()
-        # (once per rendered frame) marks them dirty; entity_update() re-uploads them
-        # on the next step and clears the flag, so the ~35 physics-setting tryset()
-        # calls run once/frame instead of once/physics-step (speedmult x savings).
+        # Frame-constant shader uniforms only change when state does. apply_state()
+        # (once per rendered frame) marks them dirty; entity_update()/can_update()
+        # re-upload them on that frame's first physics step and clear the flag, so the
+        # dozens of physics-setting tryset() calls run once/frame instead of once/step
+        # (speedmult x savings — matters a lot at 60-100 steps/frame).
         self._entity_uniforms_dirty = True
+        self._canvas_uniforms_dirty = True
 
     def get_entity_count(self) -> int:
         """Calculate entity count based on world size."""
@@ -263,69 +265,85 @@ class Sim:
         FBO must already be bound by update(). Canvas read texture must
         already be bound at location 1.
         """
-        # Boundary conditions mode for wrap behavior
-        tryset(self.canvas_update_program, 'BOUNDARY_CONDITIONS_MODE', self._state.boundary_conditions)
-        tryset(self.canvas_update_program, 'tiling_mode', tiling_mode)
+        multi_load_active = (multi_load_service and multi_load_service.is_active()
+                             and not is_preview_active)
 
-        # Multi-load mode: calculate weighted average trail settings
-        if multi_load_service and multi_load_service.is_active() and not is_preview_active:
-            trail_persistence, trail_diffusion = self._calculate_weighted_trail_settings(multi_load_service)
-        else:
-            trail_persistence = self._state.TRAIL_PERSISTENCE
-            trail_diffusion = self._state.TRAIL_DIFFUSION
-
-        # Assign TRAIL_PERSISTENCE as a PhysicsSetting struct
-        min_val, max_val = self._get_slider_range('Trail Persistence', 0.0, 1.0)
-        tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.slider_value', trail_persistence)
-        tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.min_value', min_val)
-        tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.max_value', max_val)
-        # Only apply sweeps if parameter sweeps UI is enabled AND not in multi-load mode
-        if self._state.parameter_sweeps_enabled and not (multi_load_service and multi_load_service.is_active()):
-            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.x_sweep', self._state.x_sweeps.get('TRAIL_PERSISTENCE', 0.0))
-            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.y_sweep', self._state.y_sweeps.get('TRAIL_PERSISTENCE', 0.0))
-            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.cohort_sweep', self._state.cohort_sweeps.get('TRAIL_PERSISTENCE', 0.0))
-        else:
-            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.x_sweep', 0.0)
-            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.y_sweep', 0.0)
-            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.cohort_sweep', 0.0)
-        # Always apply jitter (independent of parameter_sweeps_enabled)
-        tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.jitter', self._state.jitters.get('TRAIL_PERSISTENCE', 0.0))
-
-        # Assign TRAIL_DIFFUSION as a PhysicsSetting struct
-        min_val, max_val = self._get_slider_range('Trail Diffusion', 0.0, 1.0)
-        tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.slider_value', trail_diffusion)
-        tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.min_value', min_val)
-        tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.max_value', max_val)
-        # Only apply sweeps if parameter sweeps UI is enabled AND not in multi-load mode
-        if self._state.parameter_sweeps_enabled and not (multi_load_service and multi_load_service.is_active()):
-            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.x_sweep', self._state.x_sweeps.get('TRAIL_DIFFUSION', 0.0))
-            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.y_sweep', self._state.y_sweeps.get('TRAIL_DIFFUSION', 0.0))
-            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.cohort_sweep', self._state.cohort_sweeps.get('TRAIL_DIFFUSION', 0.0))
-        else:
-            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.x_sweep', 0.0)
-            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.y_sweep', 0.0)
-            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.cohort_sweep', 0.0)
-        # Always apply jitter (independent of parameter_sweeps_enabled)
-        tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.jitter', self._state.jitters.get('TRAIL_DIFFUSION', 0.0))
-
-        tryset(self.canvas_update_program, 'can_tex', 1)
-
+        # --- Per-step uniforms (change every physics step) ---
         # Pass frame count to shader for initialization
         tryset(self.canvas_update_program, 'frame_count', self.frame_count)
-
-        # Set draw mode uniforms if in draw mode
-        tryset(self.canvas_update_program, 'draw_mode', draw_mode)
-        tryset(self.canvas_update_program, 'brush_mode', brush_mode)
-        tryset(self.canvas_update_program, 'fixed_direction_heading', fixed_direction_heading)
-        tryset(self.canvas_update_program, 'erase_mode', erase_mode)
+        # fill_mode is gated to step 0 by the caller (canvas_fill = ... and step_index==0),
+        # so it genuinely differs between steps and must be set every step (not guarded).
         tryset(self.canvas_update_program, 'fill_mode', fill_mode)
-        tryset(self.canvas_update_program, 'fill_direction_type', fill_direction_type)
-        tryset(self.canvas_update_program, 'canvas_draw_active', canvas_draw_active)
-        if (draw_mode or erase_mode or fill_mode) and mouse_pos is not None and prev_mouse_pos is not None:
-            tryset(self.canvas_update_program, 'mouse', mouse_pos)
-            tryset(self.canvas_update_program, 'previous_mouse', prev_mouse_pos)
-            tryset(self.canvas_update_program, 'draw_size', draw_size)
-            tryset(self.canvas_update_program, 'draw_power', draw_power)
+
+        # Multi-load weights the trail settings by current_progress, which advances
+        # every step, so refresh just those two slider values per step in that mode.
+        if multi_load_active:
+            trail_persistence, trail_diffusion = self._calculate_weighted_trail_settings(multi_load_service)
+            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.slider_value', trail_persistence)
+            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.slider_value', trail_diffusion)
+
+        # --- Frame-constant uniforms: upload once per frame, not once per step ---
+        if self._canvas_uniforms_dirty:
+            # Boundary conditions mode for wrap behavior
+            tryset(self.canvas_update_program, 'BOUNDARY_CONDITIONS_MODE', self._state.boundary_conditions)
+            tryset(self.canvas_update_program, 'tiling_mode', tiling_mode)
+
+            # In normal mode the trail settings come straight from state (constant across
+            # steps); in multi-load the slider_values were set per-step above.
+            if not multi_load_active:
+                trail_persistence = self._state.TRAIL_PERSISTENCE
+                trail_diffusion = self._state.TRAIL_DIFFUSION
+                tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.slider_value', trail_persistence)
+                tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.slider_value', trail_diffusion)
+
+            # Assign TRAIL_PERSISTENCE min/max/sweep/jitter
+            min_val, max_val = self._get_slider_range('Trail Persistence', 0.0, 1.0)
+            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.min_value', min_val)
+            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.max_value', max_val)
+            # Only apply sweeps if parameter sweeps UI is enabled AND not in multi-load mode
+            if self._state.parameter_sweeps_enabled and not multi_load_active:
+                tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.x_sweep', self._state.x_sweeps.get('TRAIL_PERSISTENCE', 0.0))
+                tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.y_sweep', self._state.y_sweeps.get('TRAIL_PERSISTENCE', 0.0))
+                tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.cohort_sweep', self._state.cohort_sweeps.get('TRAIL_PERSISTENCE', 0.0))
+            else:
+                tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.x_sweep', 0.0)
+                tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.y_sweep', 0.0)
+                tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.cohort_sweep', 0.0)
+            # Always apply jitter (independent of parameter_sweeps_enabled)
+            tryset(self.canvas_update_program, 'TRAIL_PERSISTENCE_SETTING.jitter', self._state.jitters.get('TRAIL_PERSISTENCE', 0.0))
+
+            # Assign TRAIL_DIFFUSION min/max/sweep/jitter
+            min_val, max_val = self._get_slider_range('Trail Diffusion', 0.0, 1.0)
+            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.min_value', min_val)
+            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.max_value', max_val)
+            # Only apply sweeps if parameter sweeps UI is enabled AND not in multi-load mode
+            if self._state.parameter_sweeps_enabled and not multi_load_active:
+                tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.x_sweep', self._state.x_sweeps.get('TRAIL_DIFFUSION', 0.0))
+                tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.y_sweep', self._state.y_sweeps.get('TRAIL_DIFFUSION', 0.0))
+                tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.cohort_sweep', self._state.cohort_sweeps.get('TRAIL_DIFFUSION', 0.0))
+            else:
+                tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.x_sweep', 0.0)
+                tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.y_sweep', 0.0)
+                tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.cohort_sweep', 0.0)
+            # Always apply jitter (independent of parameter_sweeps_enabled)
+            tryset(self.canvas_update_program, 'TRAIL_DIFFUSION_SETTING.jitter', self._state.jitters.get('TRAIL_DIFFUSION', 0.0))
+
+            tryset(self.canvas_update_program, 'can_tex', 1)
+
+            # Set draw mode uniforms if in draw mode
+            tryset(self.canvas_update_program, 'draw_mode', draw_mode)
+            tryset(self.canvas_update_program, 'brush_mode', brush_mode)
+            tryset(self.canvas_update_program, 'fixed_direction_heading', fixed_direction_heading)
+            tryset(self.canvas_update_program, 'erase_mode', erase_mode)
+            tryset(self.canvas_update_program, 'fill_direction_type', fill_direction_type)
+            tryset(self.canvas_update_program, 'canvas_draw_active', canvas_draw_active)
+            if (draw_mode or erase_mode or fill_mode) and mouse_pos is not None and prev_mouse_pos is not None:
+                tryset(self.canvas_update_program, 'mouse', mouse_pos)
+                tryset(self.canvas_update_program, 'previous_mouse', prev_mouse_pos)
+                tryset(self.canvas_update_program, 'draw_size', draw_size)
+                tryset(self.canvas_update_program, 'draw_power', draw_power)
+
+            self._canvas_uniforms_dirty = False
 
         # FBO already bound by update() — just render the fullscreen quad
         self.canvas_vao.render(mode=moderngl.TRIANGLE_FAN, vertices=4)
@@ -415,8 +433,9 @@ class Sim:
     def apply_state(self, state: SimState) -> None:
         """Apply state from Orchestrator before update."""
         self._state = state
-        # New state -> frame-constant entity uniforms need re-uploading once this frame.
+        # New state -> frame-constant uniforms need re-uploading once this frame.
         self._entity_uniforms_dirty = True
+        self._canvas_uniforms_dirty = True
         # Update view_tex based on current_view_option
         if state.current_view_option < len(self.view_options):
             self.view_tex = self.view_options[state.current_view_option]
