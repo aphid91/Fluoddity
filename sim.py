@@ -101,6 +101,14 @@ class Sim:
         ]
         self.can_read_index = 0  # Index of texture to read from (write to the other)
 
+        # Lottery canvas: per-pixel uint32 "ticket" texture for entity lottery (image unit 0),
+        # plus an RGBA display texture for the "Lottery Canvas" view. Created regardless of
+        # whether the feature is on (cheap); the passes only dispatch when lotto is enabled.
+        self.lotto_tex = self.ctx.texture(canvas_shape, 1, dtype='u4')
+        self.lotto_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+        self.lotto_display_tex = self.ctx.texture(canvas_shape, 4, dtype='f4')
+        self.lotto_display_tex.filter = (moderngl.NEAREST, moderngl.NEAREST)
+
         # For camera to use (will be updated each frame to point to the most recently written buffer)
         self.view_tex = self.can_textures[self.can_read_index]
 
@@ -129,6 +137,32 @@ class Sim:
         tryset(self.entity_update_program, 'canvas_resolution', canvas_shape)
         tryset(self.entity_update_program, 'canvas', 1)
         tryset(self.entity_update_program, 'field_texture', 5)
+
+        # 1b. Lottery compute shaders (natural-selection system).
+        # clear: zeroes the lotto canvas. payout: winner-mutates/losers-adopt-winner.
+        # display: colors the lotto canvas by winner hue for the "Lottery Canvas" view.
+        try:
+            self.lotto_clear_program = self.ctx.compute_shader(read_shader('shaders/lotto_clear.glsl'))
+        except Exception as e:
+            print('Lotto Clear Compilation Failed:')
+            print(e)
+
+        lotto_payout_source = read_shader('shaders/lotto_payout.glsl')
+        lotto_payout_source = shader_prepend(lotto_payout_source, read_shader('shaders/fourier4_4.glsl'))
+        lotto_payout_source = prepend_defines(lotto_payout_source, self.entity_count)
+        try:
+            self.lotto_payout_program = self.ctx.compute_shader(lotto_payout_source)
+        except Exception as e:
+            print('Lotto Payout Compilation Failed:')
+            print(e)
+        tryset(self.lotto_payout_program, 'canvas_resolution', canvas_shape)
+        tryset(self.lotto_payout_program, 'WORLD_SIZE', self.world_size)
+
+        try:
+            self.lotto_display_program = self.ctx.compute_shader(read_shader('shaders/lotto_display.glsl'))
+        except Exception as e:
+            print('Lotto Display Compilation Failed:')
+            print(e)
 
         # 2. Brush update shaders (instanced rendering)
         self.brush_vertex_source = read_shader('shaders/brush.vert')
@@ -168,7 +202,8 @@ class Sim:
                       is_preview_active=False, field_texture_bound=False,
                       force_field_strength: float = 1.0,
                       strafe_field_strength: float = 1.0,
-                      generics: tuple = None):
+                      generics: tuple = None,
+                      lotto_enabled: bool = False):
         '''
         Run a single physics update on all particles
         '''
@@ -226,6 +261,9 @@ class Sim:
             tryset(self.entity_update_program, 'HUE_SENSITIVITY', self._state.hue_sensitivity)
             tryset(self.entity_update_program, 'COLOR_BY_COHORT', self._state.color_by_cohort)
 
+            # Lottery mode: switches entity_update to persistent-rules + ticket writes.
+            tryset(self.entity_update_program, 'LOTTO_ENABLED', lotto_enabled)
+
             # Generic scratch uniforms for live-coding
             if generics is not None:
                 tryset(self.entity_update_program, 'generic03', generics[0:4])
@@ -234,8 +272,32 @@ class Sim:
             self._entity_uniforms_dirty = False
 
         num_workgroups = (self.entity_count + 63) // 64
+
+        if lotto_enabled:
+            # Lottery pipeline: clear -> entity_update (writes tickets) -> payout (selection).
+            canvas_dim_x, canvas_dim_y = self.get_canvas_dimensions()
+            lotto_clear_wg = ((canvas_dim_x + 15) // 16, (canvas_dim_y + 15) // 16, 1)
+            self.lotto_tex.bind_to_image(0, read=True, write=True)
+            ctx.memory_barrier()
+            self.lotto_clear_program.run(*lotto_clear_wg)
+            ctx.memory_barrier()
+            self.entity_update_program.run(num_workgroups)
+            ctx.memory_barrier()
+            self.lotto_tex.bind_to_image(0, read=True, write=False)
+            self.lotto_payout_program.run(num_workgroups)
+        else:
+            # Normal path: byte-for-byte the original dispatch (no lotto passes, no image binds).
+            ctx.memory_barrier()
+            self.entity_update_program.run(num_workgroups)
+
+    def run_lotto_display(self, ctx: moderngl.Context):
+        """Convert the lotto canvas to an RGBA display texture (winner hue per pixel).
+        Only needed when the 'Lottery Canvas' view is selected."""
+        canvas_dim_x, canvas_dim_y = self.get_canvas_dimensions()
+        self.lotto_tex.bind_to_image(0, read=True, write=False)
+        self.lotto_display_tex.bind_to_image(1, read=False, write=True)
+        self.lotto_display_program.run((canvas_dim_x + 15) // 16, (canvas_dim_y + 15) // 16, 1)
         ctx.memory_barrier()
-        self.entity_update_program.run(num_workgroups)
 
     def brush_update(self, ctx: moderngl.Context):
         """Render particles additively into the canvas write-target FBO.
@@ -358,7 +420,8 @@ class Sim:
                field_texture=None,
                force_field_strength: float = 1.0,
                strafe_field_strength: float = 1.0,
-               generics: tuple = None):
+               generics: tuple = None,
+               lotto_enabled: bool = False):
         # Bind the current read buffer for entity_update sampling
         self.can_textures[self.can_read_index].use(location=1)
 
@@ -374,7 +437,8 @@ class Sim:
                            field_texture_bound=field_texture is not None,
                            force_field_strength=force_field_strength,
                            strafe_field_strength=strafe_field_strength,
-                           generics=generics)
+                           generics=generics,
+                           lotto_enabled=lotto_enabled)
 
         # 2. Determine write target for canvas decay + brush
         if strong_determinism:

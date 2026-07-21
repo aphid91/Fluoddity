@@ -242,6 +242,14 @@ class App:
                 # Field texture not initialized yet — fall back to canvas view
                 ui_state.sim.current_view_option = 0
 
+        # 5.0.2 Lottery Canvas view. Its dropdown index is the last entry, whose
+        # position shifts by 2 when the Force/Strafe field views are present, so
+        # compute it at runtime (never hardcode). Matches ui/preferences_window.py.
+        field_views_present = (self.advanced_drawing_processor.field_texture is not None)
+        base_view_count = len(self.sim.view_option_labels) + 2  # + Camera + Tiled
+        lotto_view_index = base_view_count + (2 if field_views_present else 0)
+        is_lotto_view = (ui_state.sim.current_view_option == lotto_view_index)
+
         # 5.1. Multi-load conflict prevention
         if ui_state.multi_load.multi_load_enabled:
             ui_state.sim.parameter_sweeps_enabled = False
@@ -285,8 +293,14 @@ class App:
                 ui_state, sweep_mode, sweep_reticle_pos, sweep_reticle_visible,
                 screen_aspect, ui_state.sim.watercolor_mode,
                 tiling_mode=tiling_mode,
-                screenshot_in_progress=self.screenshot_in_progress
+                screenshot_in_progress=self.screenshot_in_progress,
+                is_lotto_view=is_lotto_view
             )
+
+        # 6.2. Lottery Canvas view: colorize the lotto canvas and point the camera at it.
+        if is_lotto_view:
+            self.sim.run_lotto_display(self.sim.ctx)
+            self.sim.view_tex = self.sim.lotto_display_tex
 
         # 6.5. Screenshot save and settings restoration
         if self.screenshot_in_progress:
@@ -294,7 +308,8 @@ class App:
 
         # 7. Render camera view
         self._render_camera_view(ui_state, sweep_mode, sweep_reticle_pos,
-                                  sweep_reticle_visible, screen_aspect, tiling_mode)
+                                  sweep_reticle_visible, screen_aspect, tiling_mode,
+                                  is_lotto_view=is_lotto_view)
 
         # 7.5. Render arrow debug overlay if enabled
         if ui_state.preferences.debug_arrows:
@@ -333,7 +348,8 @@ class App:
         self.ui.render()
 
     def _render_camera_view(self, ui_state, sweep_mode, sweep_reticle_pos,
-                             sweep_reticle_visible, screen_aspect, tiling_mode):
+                             sweep_reticle_visible, screen_aspect, tiling_mode,
+                             is_lotto_view=False):
         """Render the camera view to screen."""
         draw_trail_mode = ui_state.preferences.mouse_mode == "Draw Trail"
 
@@ -360,7 +376,8 @@ class App:
             bloom_enabled=ui_state.preferences.bloom_enabled,
             bloom_threshold=ui_state.preferences.bloom_threshold,
             bloom_intensity=ui_state.preferences.bloom_intensity,
-            bloom_radius=ui_state.preferences.bloom_radius
+            bloom_radius=ui_state.preferences.bloom_radius,
+            is_lotto_view=is_lotto_view
         )
 
     def _save_screenshot(self, ui_state):

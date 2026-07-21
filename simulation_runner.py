@@ -25,10 +25,14 @@ class SimulationRunner:
         # Mouse tracking for draw trail mode
         self.prev_mouse_tex_coords = (0.0, 0.0)
 
+        # Lottery: track previous enable state so we can reseed rules on off->on.
+        self._prev_lottery_enabled = False
+
     def run_simulation_frame(self, ui_state, sweep_mode, sweep_reticle_pos,
                               sweep_reticle_visible, screen_aspect,
                               watercolor_mode=False, tiling_mode=False,
-                              screenshot_in_progress=False):
+                              screenshot_in_progress=False,
+                              is_lotto_view=False):
         """Run simulation step(s) with frame assembly and video recording."""
         self._screenshot_in_progress = screenshot_in_progress
         self.camera.watercolor_mode = watercolor_mode
@@ -126,7 +130,8 @@ class SimulationRunner:
         # Build shared frame assembly kwargs (used by both paths)
         assemble_kwargs = self._build_assemble_kwargs(
             ui_state, sweep_mode, sweep_reticle_pos, sweep_reticle_visible,
-            screen_aspect, mouse_screen_coords, tiling_mode, view_min, view_max
+            screen_aspect, mouse_screen_coords, tiling_mode, view_min, view_max,
+            is_lotto_view=is_lotto_view
         )
 
         if motion_blur:
@@ -191,7 +196,8 @@ class SimulationRunner:
 
     def _build_assemble_kwargs(self, ui_state, sweep_mode, sweep_reticle_pos,
                                 sweep_reticle_visible, screen_aspect,
-                                mouse_screen_coords, tiling_mode, view_min, view_max):
+                                mouse_screen_coords, tiling_mode, view_min, view_max,
+                                is_lotto_view=False):
         """Build the kwargs dict for frame_assembler.assemble_frame().
 
         These are shared between motion-blur and non-motion-blur paths.
@@ -230,6 +236,7 @@ class SimulationRunner:
             force_field_checked=adv_prefs.advanced_draw_force_field if advanced_active else False,
             strafe_field_checked=adv_prefs.advanced_draw_strafe_field if advanced_active else False,
             draw_target_overlay_opacity=adv_prefs.draw_target_overlay_opacity if advanced_active else 0.0,
+            is_lotto_view=is_lotto_view,
         )
 
     def _run_physics_step(self, ui_state, draw_mode, mouse_tex_coords,
@@ -268,6 +275,15 @@ class SimulationRunner:
         generics = (p.generic0, p.generic1, p.generic2, p.generic3,
                      p.generic4, p.generic5, p.generic6, p.generic7)
 
+        # Lottery: force off during multi-load (it owns rules[] via its own buffer),
+        # mirroring how parameter sweeps are disabled under multi-load.
+        multi_load_active = ui_state.multi_load.multi_load_enabled
+        lotto_enabled = adv_prefs.lottery_enabled and not multi_load_active
+        # Rising edge (off->on): reset so reset() seeds the persistent rule buffer.
+        if lotto_enabled and not self._prev_lottery_enabled:
+            self.sim.reset()
+        self._prev_lottery_enabled = lotto_enabled
+
         self.sim.update(
             self.camera.ctx,
             draw_mode=draw_mode,
@@ -292,6 +308,7 @@ class SimulationRunner:
             force_field_strength=adv_prefs.force_field_strength,
             strafe_field_strength=adv_prefs.strafe_field_strength,
             generics=generics,
+            lotto_enabled=lotto_enabled,
         )
 
         # Check for deferred entity selection only on first physics step

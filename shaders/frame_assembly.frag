@@ -33,6 +33,7 @@ uniform float camera_zoom;          // Camera zoom level
 
 // Tiling mode parameters
 uniform bool tiling_mode_enabled;   // Whether tiling mode is active
+uniform bool is_lotto_view;         // Whether showing the Lottery Canvas (already RGB; skip HSV remap)
 uniform vec2 view_min;              // Entity-space minimum of view rectangle
 uniform vec2 view_max;              // Entity-space maximum of view rectangle
 uniform vec2 tiling_scale;          // Converts frame_assembly world_pos to entity space
@@ -290,7 +291,8 @@ void main() {
     // Apply gamma correction only on final sample (AFTER accumulation)
     if (final_sample) {
         //if we are in canvas or field view, we must interpret raw texture before gamma correction and display:
-        if(view_mode == 0 || view_mode == 3 || view_mode == 4){
+        //Lottery view is already RGB (from lotto_display.glsl), so skip the velocity->HSV remap.
+        if((view_mode == 0 || view_mode == 3 || view_mode == 4) && !is_lotto_view){
             fragColor.xyz = 8*hsv2rgb(vec3(atan(fragColor.y,fragColor.x)/2./3.1415,.75,length(fragColor.xy)));
         }
         // Apply brightness multiplier before gamma correction
@@ -304,7 +306,7 @@ void main() {
     
         //Conditionally draw sweep reticle and mouse draw reticle
         vec2 overlay_uv=uv;
-        if(view_mode == 0 || view_mode >= 3){overlay_uv = canvas_uv_to_screen(uv);}
+        if(view_mode == 0 || view_mode >= 3 || is_lotto_view){overlay_uv = canvas_uv_to_screen(uv);}
             if(PARAMETER_SWEEP_MODE){
                 fragColor.xyz += sweep_overlay(overlay_uv)* (WATERCOLOR_MODE?-1:1);
             }

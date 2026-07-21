@@ -339,6 +339,13 @@ class MenuBarMixin:
                 )
                 self._delayed_tooltip("Enables double buffering for the canvas. When checked,\nevents will unfold exactly the same way after every\nsimulation reset. Comes with a small ~3% performance penalty.")
 
+                # Lottery (natural selection) toggle
+                _, self.state.preferences.lottery_enabled = imgui.checkbox(
+                    "Lottery - EXPERIMENTAL",
+                    self.state.preferences.lottery_enabled
+                )
+                self._delayed_tooltip("Natural selection: entities compete for canvas pixels.\nPixel winners mutate their rule; losers adopt the winner's rule,\nso successful rules spread and drift over time.\nEnabling reseeds the rule population. See the 'Lottery Canvas' view.")
+
                 # Advanced Drawing toggle
                 _, self.state.preferences.advanced_drawing_enabled = imgui.checkbox(
                     "Advanced Drawing - EXPERIMENTAL",

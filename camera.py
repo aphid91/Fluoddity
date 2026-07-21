@@ -205,7 +205,8 @@ class Camera:
                 mouse_screen_coords: tuple = (0.5, 0.5), exposure: float = 0.0,
                 tiling_mode: bool = False, tonemap_softness: float = 1.0,
                 bloom_enabled: bool = False, bloom_threshold: float = 0.8,
-                bloom_intensity: float = 0.5, bloom_radius: float = 1.0):
+                bloom_intensity: float = 0.5, bloom_radius: float = 1.0,
+                is_lotto_view: bool = False):
         self.watercolor_mode = watercolor_mode
         self.ink_weight = ink_weight
 
@@ -247,7 +248,8 @@ class Camera:
                 view_max=tuple(view_max),
                 tiling_scale=self.compute_tiling_scale(),
                 canvas_resolution=self.sim.get_canvas_dimensions(),
-                tonemap_softness=tonemap_softness
+                tonemap_softness=tonemap_softness,
+                is_lotto_view=is_lotto_view
             )
             # assemble_frame returns the texture immediately when total_samples=1
             if bloom_enabled and not watercolor_mode and TEX_TO_VIEW is not None:

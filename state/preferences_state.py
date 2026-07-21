@@ -91,6 +91,9 @@ class PreferencesState:
     # Plotting (GPU histogram reports)
     show_plotting_window: bool = False
 
+    # Lottery-based natural selection (persistent evolving rules)
+    lottery_enabled: bool = False
+
 
 def save_preferences(prefs: PreferencesState, filepath: Path | str = None) -> None:
     """Save preferences to a JSON file."""

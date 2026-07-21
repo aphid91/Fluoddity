@@ -61,6 +61,12 @@ uniform bool WRITE_RULES; // Set true for one frame when rule buffer readback is
 uniform vec4 generic03;
 uniform vec4 generic47;
 
+// Lottery-based natural selection. When enabled, rules[] becomes persistent
+// (seeded at reset(), read each frame, mutated only by lotto_payout.glsl).
+uniform bool LOTTO_ENABLED;
+#define INDEX_BITS 20
+layout(r32ui, binding = 0) uniform uimage2D lotto_canvas;
+
 // Multi-load control uniforms (small, stay as uniforms)
 uniform int MULTILOAD_COUNT; // Number of loaded configs (0 = normal mode)
 uniform float MULTI_LOAD_CURRENT_PROGRESS; // Current position in config ring (0-1)
@@ -359,6 +365,18 @@ float get_cohort(uint index) {
     return float(get_particle_cohorts()) * float(index) / float(ACTIVE_COUNT);
 }
 
+//randomly change noise function parameters, scaled by parameter amount.
+//Each cohort gets a unique mutation for any given rule
+void mutate_rule(inout Rule current_rule,float amount,float cohort){
+    float seed = hash(current_rule.centers[4].frequency.xy+current_rule.centers[7].amplitude.yx+current_rule.centers[1].frequency.zw)+cohort;
+
+    for(int i = 0; i < 10; i++) {
+        vec4 amp_mutation = amount * (-1.0 + 2.0 * hash4(-.5+vec2(-i+seed,i)));
+        current_rule.centers[i].amplitude += amp_mutation;
+        current_rule.centers[i].frequency *= 1 + amount * 0.5 * (hash(vec2(seed,i))-.5);
+    }
+}
+
 //Return all entities to their initialization state
 void reset(uint index){
 
@@ -398,23 +416,23 @@ void reset(uint index){
         //pos += 0.02 * vec2(hash(vec2(cohort_val)), hash(vec2(cohort_val + 1.0))); // Small jitter
     }
 
-    
+
     //store to persistent entity buffer
     entities[index]=Entity(pos,vel, 0.0, size, float[2](0,0));
-}
 
-//randomly change noise function parameters, scaled by parameter amount. 
-//Each cohort gets a unique mutation for any given rule
-void mutate_rule(inout Rule current_rule,float amount,float cohort){
-    float seed = hash(current_rule.centers[4].frequency.xy+current_rule.centers[7].amplitude.yx+current_rule.centers[1].frequency.zw)+cohort;
-
-    for(int i = 0; i < 10; i++) {
-        vec4 amp_mutation = amount * (-1.0 + 2.0 * hash4(-.5+vec2(-i+seed,i)));
-        current_rule.centers[i].amplitude += amp_mutation;
-        current_rule.centers[i].frequency *= 1 + amount * 0.5 * (hash(vec2(seed,i))-.5);
+    //Lottery mode: seed the persistent rule buffer once here. From then on main()
+    //only reads rules[index] and lotto_payout.glsl does all mutation (evolution).
+    if(LOTTO_ENABLED){
+        Rule seed_rule = get_particle_target_rule();
+        //if a few arbitrary coefficients are exactly 0, assume no target and generate a random rule.
+        if(seed_rule.centers[0].frequency==vec4(0) && seed_rule.centers[5].amplitude==vec4(0)){
+            seed_rule = Rule(generate_random_centers(get_particle_rule_seed()+floor(cohort_val)));
+        }
+        //give each entity a slightly varied starting rule so evolution has diversity to work with
+        mutate_rule(seed_rule,calculate_setting(get_particle_mutation_scale(),pos,cohort_val),get_particle_rule_seed()+floor(cohort_val));
+        rules[index] = seed_rule;
     }
 }
-
 
 //Used to enforce left-right symmetry in the local coordinates vec2(forward, left)
 vec2 y_reflect(vec2 p){
@@ -489,16 +507,23 @@ void main() {
     Entity e=entities[index];
     float cohort = get_cohort(index);
 
-    Rule current_rule=get_particle_target_rule();
-    //if a few arbitrary coefficients are exactly 0, then assume target_rule is all 0s (no target) and generate a random rule instead.
-    if(current_rule.centers[0].frequency==vec4(0) && current_rule.centers[5].amplitude==vec4(0)){
-        current_rule = Rule(generate_random_centers(get_particle_rule_seed()+floor(cohort)));
-    }
-    //Each cohort gets a random mutation
-    mutate_rule(current_rule,calculate_setting(get_particle_mutation_scale(),e.pos,cohort),get_particle_rule_seed()+floor(cohort));
-    // Only write rules when explicitly requested (expensive - 320 bytes per particle)
-    if(WRITE_RULES) {
-        rules[index] = current_rule;
+    Rule current_rule;
+    if(LOTTO_ENABLED){
+        //Lottery mode: rules[] is the authoritative evolving state. reset() seeded it,
+        //lotto_payout.glsl mutates it. Here we just read.
+        current_rule = rules[index];
+    } else {
+        current_rule=get_particle_target_rule();
+        //if a few arbitrary coefficients are exactly 0, then assume target_rule is all 0s (no target) and generate a random rule instead.
+        if(current_rule.centers[0].frequency==vec4(0) && current_rule.centers[5].amplitude==vec4(0)){
+            current_rule = Rule(generate_random_centers(get_particle_rule_seed()+floor(cohort)));
+        }
+        //Each cohort gets a random mutation
+        mutate_rule(current_rule,calculate_setting(get_particle_mutation_scale(),e.pos,cohort),get_particle_rule_seed()+floor(cohort));
+        // Only write rules when explicitly requested (expensive - 320 bytes per particle)
+        if(WRITE_RULES) {
+            rules[index] = current_rule;
+        }
     }
     
     //frame_count == 0 signals a simulation reset
@@ -593,5 +618,18 @@ void main() {
     //Commit new entity state to buffers
     entities[index]=e;
 
-
+    //Lottery: each entity enters a per-pixel lottery for the pixel it occupies.
+    //Highest random ticket wins the pixel (imageAtomicMax). lotto_payout.glsl reads
+    //the winners and applies "winner mutates, losers adopt winner" selection.
+    if(LOTTO_ENABLED){
+        vec2 lotto_uv = e.pos/(2.0*vec2(x_edge,y_edge)) + 0.5;
+        if(boundary_mode==2) lotto_uv = fract(lotto_uv); // WRAP
+        ivec2 lp = clamp(ivec2(lotto_uv*canvas_resolution), ivec2(0), ivec2(canvas_resolution)-1);
+        // Ticket: top (32-INDEX_BITS) bits = random priority, bottom INDEX_BITS = entity index.
+        // max(1u,...) keeps the random field nonzero so a real ticket never reads as empty (0).
+        uint lseed = pcg_hash(index) ^ floatBitsToUint(e.pos.x) ^ floatBitsToUint(e.vel.y);
+        uint rnd = max(1u, pcg_hash(lseed) >> uint(INDEX_BITS));
+        uint ticket = (rnd << uint(INDEX_BITS)) | (index & ((1u << uint(INDEX_BITS)) - 1u));
+        imageAtomicMax(lotto_canvas, lp, ticket);
+    }
 }
