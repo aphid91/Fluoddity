@@ -73,7 +73,7 @@ if(hash(e.pos)<.7){return;}///////////////////////NO LOTTO FOR ME
     if (ticket != 0u && winner_index != index) {
         // Loser: adopt the winner's rule (whole-rule copy).
         float dens = length(get_can(e.pos).xy);
-        float CHILD_MUT = .0051;//.005;//.01*abs(dens-generic03.x);
+        float CHILD_MUT = .002;//.005;//.01*abs(dens-generic03.x);
         Rule new_rule = rules[winner_index];
         int r0 = int(hash(e.pos)*10);
         int r2 = int(hash(10-e.pos)*10);
@@ -84,10 +84,10 @@ if(hash(e.pos)<.7){return;}///////////////////////NO LOTTO FOR ME
         rules[index] = new_rule;//rules[winner_index];
     } else if (winner_index == index) {
         // Winner: nudge a couple of coefficients so successful lineages keep drifting.
-        int r0 = int(hash(e.pos) * 10.0);
-        int r2 = int(hash(10.0 - e.pos) * 10.0);
-        vec4 r1 = 0.031 * (hash4(e.vel) * 2.0 - 1.0);
-        vec4 r3 = 0.031 * (hash4(10.0 - e.vel) * 2.0 - 1.0);
+        //int r0 = int(hash(e.pos) * 10.0);
+        //int r2 = int(hash(10.0 - e.pos) * 10.0);
+        //vec4 r1 = 0.031 * (hash4(e.vel) * 2.0 - 1.0);
+        //vec4 r3 = 0.031 * (hash4(10.0 - e.vel) * 2.0 - 1.0);
         //rules[index].centers[r0].amplitude += r1;
         //rules[index].centers[r2].frequency += r3;
     }
