@@ -73,7 +73,7 @@ if(hash(e.pos)<.7){return;}///////////////////////NO LOTTO FOR ME
     if (ticket != 0u && winner_index != index) {
         // Loser: adopt the winner's rule (whole-rule copy).
         float dens = length(get_can(e.pos).xy);
-        float CHILD_MUT = .00071;//.005;//.01*abs(dens-generic03.x);
+        float CHILD_MUT = .0051;//.005;//.01*abs(dens-generic03.x);
         Rule new_rule = rules[winner_index];
         int r0 = int(hash(e.pos)*10);
         int r2 = int(hash(10-e.pos)*10);

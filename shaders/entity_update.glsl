@@ -629,6 +629,9 @@ void main() {
         // max(1u,...) keeps the random field nonzero so a real ticket never reads as empty (0).
         uint lseed = pcg_hash(index) ^ floatBitsToUint(e.pos.x) ^ floatBitsToUint(e.vel.y);
         uint rnd = max(1u, pcg_hash(lseed) >> uint(INDEX_BITS));
+        float score = 1-abs(dot(safenorm(e.vel),safenorm(get_can(e.pos))));
+        uint score_tick = uint(float(1<<(32-INDEX_BITS))*score);
+        rnd = uint(mix(float(rnd),float(score_tick),.5));
         uint ticket = (rnd << uint(INDEX_BITS)) | (index & ((1u << uint(INDEX_BITS)) - 1u));
         imageAtomicMax(lotto_canvas, lp, ticket);
     }
