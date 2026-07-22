@@ -43,5 +43,9 @@ void main() {
     uint winner_index = ticket & INDEX_MASK;
     float hue = entities[winner_index].hue;
     vec3 rgb = hsv2rgb(vec3(hue, 0.8, 1.0));
-    imageStore(display_tex, pixel, vec4(rgb, 1.0));
+    //imageStore(display_tex, pixel, vec4(rgb, 1.0));
+    float perc = (float(ticket>>20)/float(1<<12));
+    perc = -1./log(perc);//reconstruct ticket count estimate
+    //perc = 1-max(0,10-abs(perc-5))/10.;
+    imageStore(display_tex,pixel,vec4(vec3(perc),1.0));
 }
