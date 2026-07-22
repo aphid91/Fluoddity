@@ -572,10 +572,10 @@ void main() {
 
 
     //Set entity hue (saturation/brightness/alpha are computed in vertex shaders)
-    e.hue = get_particle_hue_sensitivity()*col_params.x;
-    if(get_particle_color_by_cohort()) {e.hue = hash(vec2(floor(cohort)));}
+    //e.hue = get_particle_hue_sensitivity()*col_params.x;
+    //if(get_particle_color_by_cohort()) {e.hue = hash(vec2(floor(cohort)));}
     //e.hue = 0;//e.pos.x;
-
+    e.hue = dot(rules[index].centers[0].frequency,rules[index].centers[1].amplitude)/2;
     //Accelerate: Apply drag and add force to e.vel,
     e.vel = e.vel*calculate_setting(get_particle_drag(),e.pos,cohort) + force;
     //Move: add e.vel and strafe to e.pos

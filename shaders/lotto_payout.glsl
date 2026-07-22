@@ -82,6 +82,7 @@ if(hash(e.pos)<.7){return;}///////////////////////NO LOTTO FOR ME
         new_rule.centers[r0].amplitude+=r1;
         new_rule.centers[r2].frequency+=r3;
         rules[index] = new_rule;//rules[winner_index];
+        entities[index].hue = entities[winner_index].hue+(r1.x+r3.y)*.21;
     } else if (winner_index == index) {
         // Winner: nudge a couple of coefficients so successful lineages keep drifting.
         //int r0 = int(hash(e.pos) * 10.0);
