@@ -44,7 +44,7 @@ class VidSaver:
             self.recorder = FFmpegVideoRecorder(
                 width=output_width,
                 height=output_height,
-                fps=50,  # Default fps, can be made configurable
+                fps=60,  # Default fps, can be made configurable
                 output_path=output_path,
                 realtime=False
             )
