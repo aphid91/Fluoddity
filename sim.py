@@ -156,6 +156,7 @@ class Sim:
             print('Lotto Payout Compilation Failed:')
             print(e)
         tryset(self.lotto_payout_program, 'canvas_resolution', canvas_shape)
+        tryset(self.lotto_payout_program, 'canvas', 1)  # trails canvas bound to texture unit 1 in update()
         tryset(self.lotto_payout_program, 'WORLD_SIZE', self.world_size)
 
         try:
@@ -271,12 +272,22 @@ class Sim:
 
             self._entity_uniforms_dirty = False
 
+        # Stash generics so run_lotto_display (separate dispatch) can reuse them.
+        if generics is not None:
+            self._generics = generics
+
         num_workgroups = (self.entity_count + 63) // 64
 
         if lotto_enabled:
             # Lottery pipeline: clear -> entity_update (writes tickets) -> payout (selection).
             canvas_dim_x, canvas_dim_y = self.get_canvas_dimensions()
             lotto_clear_wg = ((canvas_dim_x + 15) // 16, (canvas_dim_y + 15) // 16, 1)
+            # Generic scratch uniforms for live-coding.
+            if generics is not None:
+                tryset(self.lotto_clear_program, 'generic03', generics[0:4])
+                tryset(self.lotto_clear_program, 'generic47', generics[4:8])
+                tryset(self.lotto_payout_program, 'generic03', generics[0:4])
+                tryset(self.lotto_payout_program, 'generic47', generics[4:8])
             self.lotto_tex.bind_to_image(0, read=True, write=True)
             ctx.memory_barrier()
             self.lotto_clear_program.run(*lotto_clear_wg)
@@ -294,6 +305,11 @@ class Sim:
         """Convert the lotto canvas to an RGBA display texture (winner hue per pixel).
         Only needed when the 'Lottery Canvas' view is selected."""
         canvas_dim_x, canvas_dim_y = self.get_canvas_dimensions()
+        # Generic scratch uniforms for live-coding (stashed by entity_update).
+        generics = getattr(self, '_generics', None)
+        if generics is not None:
+            tryset(self.lotto_display_program, 'generic03', generics[0:4])
+            tryset(self.lotto_display_program, 'generic47', generics[4:8])
         self.lotto_tex.bind_to_image(0, read=True, write=False)
         self.lotto_display_tex.bind_to_image(1, read=False, write=True)
         self.lotto_display_program.run((canvas_dim_x + 15) // 16, (canvas_dim_y + 15) // 16, 1)

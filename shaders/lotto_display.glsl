@@ -23,6 +23,10 @@ layout(std430, binding = 0) buffer EntityBuffer {
 layout(r32ui, binding = 0) readonly uniform uimage2D lotto_canvas;
 layout(rgba32f, binding = 1) writeonly uniform image2D display_tex;
 
+// Generic scratch uniforms for live-coding (Generics window sliders, -1..1).
+uniform vec4 generic03;
+uniform vec4 generic47;
+
 vec3 hsv2rgb(vec3 c) {
     vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
     vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
