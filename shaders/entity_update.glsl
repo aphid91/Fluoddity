@@ -416,7 +416,6 @@ void reset(uint index){
         //pos += 0.02 * vec2(hash(vec2(cohort_val)), hash(vec2(cohort_val + 1.0))); // Small jitter
     }
     
-
     //store to persistent entity buffer
     entities[index]=Entity(pos,vel, 0.50, size, float[2](0,0));
 
@@ -572,10 +571,10 @@ void main() {
 
 
     //Set entity hue (saturation/brightness/alpha are computed in vertex shaders)
-    //e.hue = get_particle_hue_sensitivity()*col_params.x;
-    //if(get_particle_color_by_cohort()) {e.hue = hash(vec2(floor(cohort)));}
+    e.hue = get_particle_hue_sensitivity()*col_params.x;
+    if(get_particle_color_by_cohort()) {e.hue = hash(vec2(floor(cohort)));}
     //e.hue = 0;//e.pos.x;
-    e.hue = dot(rules[index].centers[0].frequency,rules[index].centers[1].amplitude)/2;
+    //e.hue = dot(rules[index].centers[0].frequency+rules[index].centers[5].frequency,rules[index].centers[1].amplitude+rules[index].centers[7].amplitude)/8;
     //Accelerate: Apply drag and add force to e.vel,
     e.vel = e.vel*calculate_setting(get_particle_drag(),e.pos,cohort) + force;
     //Move: add e.vel and strafe to e.pos
@@ -632,7 +631,7 @@ void main() {
         uint rnd = max(1u, pcg_hash(lseed) >> uint(INDEX_BITS));
         vec2 canny = get_can(e.pos);
         float score = dot(safenorm(e.vel),safenorm(canny));
-        score = (score-generic03.x)*2;//1/((x*4-3)*(x*4-3)+1)
+        score = (score-generic03.x)*6;//1/((x*4-3)*(x*4-3)+1)
         score = clamp(10*length(canny)/(score*score+1),0,1);
         uint score_tick = uint(float(1<<(32-INDEX_BITS))*score);
         rnd = uint(mix(float(rnd),float(score_tick),.9));
