@@ -50,6 +50,9 @@ uniform PhysicsSetting MUTATION_SCALE_SETTING;
 uniform PhysicsSetting HAZARD_RATE_SETTING;
 uniform float HUE_SENSITIVITY;
 uniform bool COLOR_BY_COHORT;
+// When > 0, particles that stray farther than this radius from their reset
+// position are pushed back toward it (0 disables). Exposed as "Cohort Confinement".
+uniform float LIMITED_EXTENTS;
 uniform bool DISABLE_SYMMETRY;
 uniform int ABSOLUTE_ORIENTATION; // 0=Off, 1=Y axis, 2=Radial
 uniform float ORIENTATION_MIX; // Blend factor for orientation calculations
@@ -377,10 +380,8 @@ void mutate_rule(inout Rule current_rule,float amount,float cohort){
     }
 }
 
-//Return all entities to their initialization state
-void reset(uint index){
-
-    float size=index<ACTIVE_COUNT?.0015/SQRT_WORLD_SIZE: 0;
+//Generate an entity's initialization position and velocity, packed as vec4(pos, vel)
+vec4 initial_pos_vel(uint index){
     float cohort_val = get_cohort(index);
     float aspect = sqrt(canvas_resolution.x/canvas_resolution.y);
 
@@ -415,7 +416,19 @@ void reset(uint index){
         pos += vec2(cos(angle), sin(angle)) * radius;
         //pos += 0.02 * vec2(hash(vec2(cohort_val)), hash(vec2(cohort_val + 1.0))); // Small jitter
     }
-    
+
+    return vec4(pos, vel);
+}
+
+//Return all entities to their initialization state
+void reset(uint index){
+
+    float size=index<ACTIVE_COUNT?.0015/SQRT_WORLD_SIZE: 0;
+    float cohort_val = get_cohort(index);
+    vec4 pos_vel = initial_pos_vel(index);
+    vec2 pos = pos_vel.xy;
+    vec2 vel = pos_vel.zw;
+
     //store to persistent entity buffer
     entities[index]=Entity(pos,vel, 0.50, size, float[2](0,0));
 
@@ -585,6 +598,30 @@ void main() {
     vec4 draw_sample =get_field(e.pos);
     e.vel += .01*force_field_strength*draw_sample.xy;
     e.pos += .01*strafe_field_strength*draw_sample.zw;
+
+    //LIMITED_EXTENTS ("Cohort Confinement"): when > 0, particles that stray
+    //farther than this radius from their reset position are returned to their
+    //initial conditions. 0 disables (branch skipped).
+    if(LIMITED_EXTENTS > 0.){
+        vec2 reset_pos = initial_pos_vel(index).xy;
+        //#define HARD_LIM 1
+        #ifdef HARD_LIM
+        if(length(e.pos - reset_pos) > LIMITED_EXTENTS){
+            reset(index);
+            return;//reset expects to be the last thing we do. It handles entity buffer storage
+        }
+        #else
+        //ALTERNATIVE (softer): instead of hard-resetting, push the particle back
+        //toward reset_pos with a force and a strafe once it exceeds the radius.
+        vec2 to_home = reset_pos - e.pos;
+        float excess = length(to_home) - LIMITED_EXTENTS;
+        if(excess > 0.){
+            vec2 home_dir = safenorm(to_home);
+            e.vel += .001*excess*home_dir; //force: accelerate toward reset_pos
+            e.pos += .51*excess*home_dir;  //strafe: hop toward reset_pos
+        }
+        #endif
+    }
 
     //BOUNDARY_CONDITIONS_MODE:  0-1-2 == BOUNCE-RESET-WRAP
     float ca = canvas_resolution.x / canvas_resolution.y;

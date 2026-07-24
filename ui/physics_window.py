@@ -146,6 +146,24 @@ class PhysicsWindowMixin:
                 pls.pop_locked_style(nc_lock_colors)
             self._delayed_tooltip("Each particle is assigned to a cohort. Each cohort shares behavior:\neach cohort has a distinct mutation.")
 
+            # Cohort Confinement
+            ce_lock_colors = pls.push_locked_style('LIMITED_EXTENTS') if pls else 0
+            ce_label = pls.get_display_label('LIMITED_EXTENTS', "Cohort Confinement") if pls else "Cohort Confinement"
+            imgui.set_next_item_width(100)
+            changed_ce, new_ce = imgui.slider_float(
+                ce_label,
+                self.state.sim.LIMITED_EXTENTS,
+                0.0, 0.5,
+                "%.3f"
+            )
+            if pls and pls.handle_alt_click('LIMITED_EXTENTS'):
+                pass  # alt-click intercepted; discard value change
+            elif changed_ce:
+                self.state.sim.LIMITED_EXTENTS = new_ce
+            if pls:
+                pls.pop_locked_style(ce_lock_colors)
+            self._delayed_tooltip("Confines particles near their reset position.\nParticles straying farther than this radius are pulled back home.\n0 = off (no confinement).")
+
             imgui.separator()
 
             # Disable Symmetry

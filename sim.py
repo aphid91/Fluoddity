@@ -261,6 +261,7 @@ class Sim:
             # Appearance settings from sim state (now part of physics config)
             tryset(self.entity_update_program, 'HUE_SENSITIVITY', self._state.hue_sensitivity)
             tryset(self.entity_update_program, 'COLOR_BY_COHORT', self._state.color_by_cohort)
+            tryset(self.entity_update_program, 'LIMITED_EXTENTS', self._state.LIMITED_EXTENTS)
 
             # Lottery mode: switches entity_update to persistent-rules + ticket writes.
             tryset(self.entity_update_program, 'LOTTO_ENABLED', lotto_enabled)

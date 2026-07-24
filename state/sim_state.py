@@ -20,6 +20,9 @@ class SimState:
     TRAIL_PERSISTENCE: float = 0.938
     TRAIL_DIFFUSION: float = 1.0
     HAZARD_RATE: float = 0.0
+    # Confinement radius: particles straying farther than this from their reset
+    # position are pulled home. 0.0 = off (default, so old saves stay unconfined).
+    LIMITED_EXTENTS: float = 0.0
 
     # Extra options
     DISABLE_SYMMETRY: bool = False

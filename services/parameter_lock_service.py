@@ -17,6 +17,7 @@ LOCKABLE_SIM_PARAMS = [
     'STRAFE_POWER', 'TRAIL_PERSISTENCE', 'TRAIL_DIFFUSION', 'HAZARD_RATE',
     # Additional settings
     'rule_seed', 'boundary_conditions', 'initial_conditions', 'num_cohorts',
+    'LIMITED_EXTENTS',
     'DISABLE_SYMMETRY', 'ABSOLUTE_ORIENTATION', 'ORIENTATION_MIX',
     # Appearance
     'color_by_cohort', 'hue_sensitivity',
