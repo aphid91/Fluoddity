@@ -63,7 +63,7 @@ class FFmpegVideoRecorder:
     To decrease quality/size: Raise CRF (e.g., 28) and/or use faster preset (e.g., 'veryfast')
     """
 
-    def __init__(self, width, height, fps=50, output_path=None, realtime=True, debug_log=False):
+    def __init__(self, width, height, fps=60, output_path=None, realtime=True, debug_log=False):
         """
         Initialize ffmpeg video recorder.
 

@@ -6,7 +6,7 @@ performance impact when advanced drawing is disabled.
 
 import numpy as np
 import moderngl
-from utilities.gl_helpers import read_shader, tryset
+from utilities.gl_helpers import read_shader, shader_prepend, tryset
 from utilities.paths import get_user_data_dir, get_app_dir
 
 
@@ -96,14 +96,15 @@ class AdvancedDrawingProcessor:
                          brush_mode, fixed_direction_heading,
                          tiling_mode,
                          camera_pos=(0.0, 0.0, 0.0),
-                         camera_dir=(0.0, 0.0, 1.0)):
+                         camera_dir=(0.0, 0.0, 1.0),
+                         defines_prefix=None):
         """Run the selected override shader to generate the field texture.
 
         Called once per render frame (not per physics step). Replaces the
         field texture contents entirely (no blending).
         """
         self._ensure_resources(canvas_width, canvas_height)
-        self._ensure_override_resources(shader_name)
+        self._ensure_override_resources(shader_name, defines_prefix=defines_prefix)
         r = self._resources
         ovr = self._override_resources
         if ovr is None:
@@ -314,7 +315,7 @@ class AdvancedDrawingProcessor:
             field_tex=field_tex, field_fbo=field_fbo,
         )
 
-    def _ensure_override_resources(self, shader_name):
+    def _ensure_override_resources(self, shader_name, defines_prefix=None):
         """Compile the override shader if not already compiled (or if shader changed)."""
         if (self._override_resources is not None
                 and self._override_shader_name == shader_name):
@@ -328,6 +329,8 @@ class AdvancedDrawingProcessor:
 
         vert_src = read_shader("shaders/canvas.vert")
         frag_src = shader_path.read_text()
+        if defines_prefix:
+            frag_src = shader_prepend(frag_src, defines_prefix)
 
         try:
             program = self.ctx.program(

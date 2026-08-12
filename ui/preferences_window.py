@@ -303,6 +303,12 @@ class PreferencesWindowMixin:
             if watercolor_active:
                 imgui.end_disabled()
 
+            # === Performance readout ===
+            imgui.separator()
+            fps = imgui.get_io().framerate
+            ms = 1000.0 / fps if fps > 0 else 0.0
+            imgui.text(f"Performance: {fps:.1f} FPS ({ms:.2f} ms/frame)")
+
         imgui.end()
 
         # Restore normal window background color if it was changed

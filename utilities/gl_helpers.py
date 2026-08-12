@@ -40,6 +40,21 @@ def tryset(program:moderngl.Program,uniform,value):
         if MUTED_TRYSET_WARNINGS[uniform]<10:
             print('Warning: ',uniform,' not present in ',program)
 
+def tryset_mat3(program: moderngl.Program, uniform, mat):
+    """Upload a 3x3 matrix uniform (column-major float32).
+
+    Gracefully handles optimized-away uniforms like tryset.
+    """
+    if uniform in program:
+        program[uniform].write(mat.astype("f4").T.tobytes())
+    else:
+        global MUTED_TRYSET_WARNINGS
+        if uniform not in MUTED_TRYSET_WARNINGS:
+            MUTED_TRYSET_WARNINGS[uniform] = 0
+        MUTED_TRYSET_WARNINGS[uniform] += 1
+        if MUTED_TRYSET_WARNINGS[uniform] < 10:
+            print('Warning: ', uniform, ' not present in ', program)
+
 def readback_rule(rule_buffer, rule_index):
     """
     Read back a single Rule from the buffer at the specified index.
