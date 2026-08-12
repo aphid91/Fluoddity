@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 class SimState:
     """State for simulation parameters that UI controls."""
     going: bool = True
-    current_view_option: int = 2  # 0=can, 1=brush_tex, 2=cam_brush
+    current_view_option: int = 1  # 0=can, 1=cam_brush, 2=tiled, 3=force, 4=strafe
 
     # Physics parameters
     AXIAL_FORCE: float = 0.371
@@ -37,9 +37,6 @@ class SimState:
     hue_sensitivity: float = 0.5
     color_by_cohort: bool = True  # Default True so old saves use cohort coloring
     watercolor_mode: bool = False
-    emboss_mode: int = 0  # 0=Off, 1=Canvas (Trails), 2=Brush (Particles)
-    emboss_intensity: float = 0.5
-    emboss_smoothness: float = 0.1
 
     # User notes (saved with physics config)
     notes: str = ""

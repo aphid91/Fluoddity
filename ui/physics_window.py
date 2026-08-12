@@ -295,7 +295,7 @@ class PhysicsWindowMixin:
                 imgui.separator()
 
                 # Watercolor Mode checkbox (only available in camera views, not field views)
-                watercolor_disabled = self.state.sim.current_view_option not in (2, 3)
+                watercolor_disabled = self.state.sim.current_view_option not in (1, 2)
                 if watercolor_disabled:
                     imgui.begin_disabled()
                 _, self.state.sim.watercolor_mode = imgui.checkbox(
@@ -312,53 +312,6 @@ class PhysicsWindowMixin:
                 self._delayed_tooltip("Enable watercolor rendering effect." + ("\nSwitch to Camera view to enable." if watercolor_disabled else ""))
                 if watercolor_disabled:
                     imgui.end_disabled()
-
-                imgui.separator()
-
-                # Emboss mode combo box
-                em_lock_colors = pls.push_locked_style('emboss_mode') if pls else 0
-                em_label = pls.get_display_label('emboss_mode', "Emboss") if pls else "Emboss"
-                emboss_options = ["Off", "Canvas (Trails)", "Brush (Particles)"]
-                changed_em, new_em = imgui.combo(
-                    em_label, self.state.sim.emboss_mode, emboss_options
-                )
-                if pls and pls.handle_alt_click('emboss_mode'):
-                    pass  # alt-click intercepted; discard value change
-                elif changed_em:
-                    self.state.sim.emboss_mode = new_em
-                if pls:
-                    pls.pop_locked_style(em_lock_colors)
-                self._delayed_tooltip("Calculate some fake 3D lighting\nby treating (otherwise unused) particle\ndensity as a heightmap.")
-
-                # Emboss sliders only visible when mode is not Off
-                if self.state.sim.emboss_mode != 0:
-                    # Emboss Intensity slider
-                    ei_lock_colors = pls.push_locked_style('emboss_intensity') if pls else 0
-                    ei_label = pls.get_display_label('emboss_intensity', "Emboss Intensity") if pls else "Emboss Intensity"
-                    changed_ei, new_ei = imgui.slider_float(
-                        ei_label, self.state.sim.emboss_intensity, 0.0, 1.0
-                    )
-                    if pls and pls.handle_alt_click('emboss_intensity'):
-                        pass  # alt-click intercepted; discard value change
-                    elif changed_ei:
-                        self.state.sim.emboss_intensity = new_ei
-                    if pls:
-                        pls.pop_locked_style(ei_lock_colors)
-                    self._delayed_tooltip("Intensity of emboss lighting effect. Negative values invert.")
-
-                    # Emboss Smoothness slider
-                    es_lock_colors = pls.push_locked_style('emboss_smoothness') if pls else 0
-                    es_label = pls.get_display_label('emboss_smoothness', "Emboss Smoothness") if pls else "Emboss Smoothness"
-                    changed_es, new_es = imgui.slider_float(
-                        es_label, self.state.sim.emboss_smoothness, 0.001, 1.0
-                    )
-                    if pls and pls.handle_alt_click('emboss_smoothness'):
-                        pass  # alt-click intercepted; discard value change
-                    elif changed_es:
-                        self.state.sim.emboss_smoothness = new_es
-                    if pls:
-                        pls.pop_locked_style(es_lock_colors)
-                    self._delayed_tooltip("Controls the smoothness of emboss sampling.")
 
                 imgui.end_menu()
 
@@ -525,7 +478,7 @@ class PhysicsWindowMixin:
                 if not self.state.sim.color_by_cohort:
                     imgui.set_next_item_width(100)
                     _, self.state.sim.hue_sensitivity = imgui.slider_float("Hue Sensitivity", self.state.sim.hue_sensitivity, -1.0, 1.0)
-                watercolor_disabled_adv = self.state.sim.current_view_option not in (2, 3)
+                watercolor_disabled_adv = self.state.sim.current_view_option not in (1, 2)
                 if watercolor_disabled_adv:
                     imgui.begin_disabled()
                 _, self.state.sim.watercolor_mode = imgui.checkbox("Watercolor Mode", self.state.sim.watercolor_mode)
@@ -534,18 +487,6 @@ class PhysicsWindowMixin:
                 if self.state.sim.watercolor_mode:
                     imgui.set_next_item_width(100)
                     _, self.state.sim.ink_weight = imgui.slider_float("Ink Weight", self.state.sim.ink_weight, 0.0, 4.0)
-                emboss_options = ["Off", "Canvas (Trails)", "Brush (Particles)"]
-                imgui.set_next_item_width(150)
-                if imgui.begin_combo("Emboss Mode", emboss_options[self.state.sim.emboss_mode]):
-                    for i, option in enumerate(emboss_options):
-                        if imgui.selectable(option, self.state.sim.emboss_mode == i)[0]:
-                            self.state.sim.emboss_mode = i
-                    imgui.end_combo()
-                if self.state.sim.emboss_mode != 0:
-                    imgui.set_next_item_width(100)
-                    _, self.state.sim.emboss_intensity = imgui.slider_float("Emboss Intensity", self.state.sim.emboss_intensity, -1.0, 1.0)
-                    imgui.set_next_item_width(100)
-                    _, self.state.sim.emboss_smoothness = imgui.slider_float("Emboss Smoothness", self.state.sim.emboss_smoothness, 0.001, 1.0)
                 imgui.end_menu()
 
             # After all menus: check mouse distance from all menu rectangles

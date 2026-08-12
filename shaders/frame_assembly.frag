@@ -1,7 +1,6 @@
 #version 330 core
 uniform sampler2D input_frame;
 uniform sampler2D accumulation_buffer;
-uniform sampler2D emboss_tex;       // Texture for emboss (canvas or brush, based on mode)
 uniform sampler2D field_texture;                    // Force/Strafe field (.xy=force, .zw=strafe)
 uniform bool advanced_drawing_resources_initialized; // True when field_texture has valid data
 uniform bool force_field_checked;   // Whether Force Field checkbox is active
@@ -9,7 +8,7 @@ uniform bool strafe_field_checked;  // Whether Strafe Field checkbox is active
 uniform float draw_target_overlay_opacity; // Opacity of field color overlay (0-1)
 uniform bool is_first_frame;
 uniform bool final_sample;
-uniform int view_mode;  // 0=can, 1=brush_tex, 2=cam_brush
+uniform int view_mode;  // 0=can, 1=cam_brush, 2=tiled, 3=force, 4=strafe
 uniform bool PARAMETER_SWEEP_MODE;  // Whether parameter sweeps are active
 uniform vec2 sweep_reticle_pos;     // Screen UV position of sweep reticle (0-1 range)
 uniform bool sweep_reticle_visible; // Whether to show the reticle
@@ -31,10 +30,6 @@ uniform float fixed_direction_heading;
 // Camera state for screen-to-canvas UV conversion
 uniform vec2 camera_position;       // Camera position in world space
 uniform float camera_zoom;          // Camera zoom level
-
-// Emboss parameters
-uniform float EMBOSS_INTENSITY;     // Emboss effect intensity
-uniform float EMBOSS_SMOOTHNESS;    // Emboss sampling epsilon
 
 // Tiling mode parameters
 uniform bool tiling_mode_enabled;   // Whether tiling mode is active
@@ -84,13 +79,6 @@ vec2 canvas_uv_to_screen(vec2 canvas_uv) {
     vec2 ndc = (world_pos - camera_position*vec2(1,-1)) / camera_zoom;
     // NDC to screen UV coordinates (0 to 1)
     return ndc * 0.5 + 0.5;
-}
-
-// Estimate gradient of scalar field using central differences (takes .z component as scalar)
-vec2 gradient(sampler2D tex, vec2 tex_uv, float epsilon) {
-    float dx = (texture(tex, tex_uv + vec2(epsilon, 0.0)).z - texture(tex, tex_uv - vec2(epsilon, 0.0)).z) / (2.0 * epsilon);
-    float dy = (texture(tex, tex_uv + vec2(0.0, epsilon)).z - texture(tex, tex_uv - vec2(0.0, epsilon)).z) / (2.0 * epsilon);
-    return vec2(dx, dy);
 }
 
 vec3 sweep_overlay(vec2 uv_coord) {
@@ -165,40 +153,6 @@ vec2 safenorm(vec2 n){
 vec3 safenorm(vec3 n){
     float l = length(n);
     return l>0?n/l:vec3(0);
-}
-// Compute tiled UV for sampling the single-tile texture with domain repetition
-vec2 tiled_sample_uv_emboss(vec2 screen_uv) {
-    // Convert screen UV to NDC (-1 to 1)
-    vec2 ndc = (screen_uv - 0.5) * 2.0;
-    // Apply zoom
-    ndc *= camera_zoom;
-    // Apply camera position offset (world space)
-    vec2 world = ndc + camera_position * vec2(1.0, -1.0);
-    // Convert to entity space
-    world *= tiling_scale;
-    // Wrap to [0, 1] using per-axis cell size (area-preserving entity bounds)
-    float ca = canvas_resolution.x / canvas_resolution.y;
-    vec2 cell_size = vec2(2.0 * sqrt(ca), 2.0 / sqrt(ca));
-    return fract((world + cell_size * 0.5) / cell_size);
-}
-
-vec3 emboss(vec2 uv){
-    // Early return if emboss is disabled (mode=Off or intensity=0)
-    if (EMBOSS_INTENSITY == 0.0) {
-        return vec3(.0);
-    }
-    vec2 canv_uv;
-    if (tiling_mode_enabled) {
-        // In tiling mode, use tiled UV for emboss texture
-        canv_uv = tiled_sample_uv_emboss(uv);
-    } else {
-        canv_uv = (view_mode == 2 || view_mode == 3) ? screen_to_canvas_uv(uv) : uv;
-    }
-    vec2 grad = gradient(emboss_tex, canv_uv, .01*EMBOSS_SMOOTHNESS);
-    grad *= max(abs(canv_uv-.5).x,abs(canv_uv-.5).y)>.5?0:1;
-    vec3 fakenorm = normalize(vec3(grad.x,.5/pow(EMBOSS_INTENSITY,5.),grad.y));
-    //fakenorm = vec3(0,1,0);
-    return vec3(1.74)*max(0,dot(fakenorm,normalize(vec3(1,1.,-1))));
 }
 // Tiling mode: sample color with edge blending for seamless tiling.
 // Handles particles whose sprites hang over the edge of the canonical tile.
@@ -298,7 +252,7 @@ void main() {
     vec3 current_color;
     if (tiling_mode_enabled) {
         current_color = sample_tiled_color(uv);
-    } else if (view_mode == 5) {
+    } else if (view_mode == 4) {
         // Strafe field view: use .zw channels as the vector field (displayed via .xy)
         vec4 field_sample = texture(input_frame, uv);
         current_color = vec3(field_sample.z, field_sample.w, 0.0);
@@ -312,8 +266,6 @@ void main() {
         #define INK_CONSTANT 10
         current_color = exp(INK_WEIGHT*INK_CONSTANT * current_color);
     }
-    // Emboss always uses the original screen UV, not the tiled sample UV
-    current_color = current_color*(EMBOSS_INTENSITY!=0?emboss(uv):vec3(1));//emboss(uv)*EMBOSS_INTENSITY+1-EMBOSS_INTENSITY);
     // Divide by number of samples (for averaging)
     current_color /= float(TOTAL_SAMPLES);
     
@@ -332,7 +284,7 @@ void main() {
     // Apply gamma correction only on final sample (AFTER accumulation)
     if (final_sample) {
         //if we are in canvas, brush, or field view, we must interpret raw texture before gamma correction and display:
-        if(view_mode < 2 || view_mode == 4 || view_mode == 5){
+        if(view_mode == 0 || view_mode == 3 || view_mode == 4){
             fragColor.xyz = 8*hsv2rgb(vec3(atan(fragColor.y,fragColor.x)/2./3.1415,.75,length(fragColor.xy)));
         }
         // Apply brightness multiplier before gamma correction
@@ -346,7 +298,7 @@ void main() {
     
         //Conditionally draw sweep reticle and mouse draw reticle
         vec2 overlay_uv=uv;
-        if(view_mode < 2 || view_mode >= 4){overlay_uv = canvas_uv_to_screen(uv);}
+        if(view_mode == 0 || view_mode >= 3){overlay_uv = canvas_uv_to_screen(uv);}
             if(PARAMETER_SWEEP_MODE){
                 fragColor.xyz += sweep_overlay(overlay_uv)* (WATERCOLOR_MODE?-1:1);
             }
@@ -358,7 +310,7 @@ void main() {
 
         //conditionally draw field overlay
         //CURRENTLY TURNED OFF. MAYBE INCLUDE LATER
-        if(advanced_drawing_resources_initialized&& draw_target_overlay_opacity>0.0 && (view_mode==2||view_mode==3)){
+        if(advanced_drawing_resources_initialized&& draw_target_overlay_opacity>0.0 && (view_mode==1||view_mode==2)){
             vec2 field_uv = screen_to_canvas_uv(uv);
             vec4 field = vec4(0);
             if(tiling_mode_enabled||clamp(field_uv,vec2(0),vec2(1))==field_uv){

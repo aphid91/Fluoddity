@@ -86,9 +86,6 @@ class PhysicsConfig:
     hue_sensitivity: float = 0.5
     color_by_cohort: bool = True
     watercolor_mode: bool = False
-    emboss_mode: int = 0  # 0=Off, 1=Canvas, 2=Brush
-    emboss_intensity: float = 0.5
-    emboss_smoothness: float = 0.1
 
     # Rule data (10 centers * 8 floats = 80 floats)
     rule: np.ndarray = field(default_factory=lambda: np.zeros((10, 8), dtype=np.float32))
@@ -140,9 +137,6 @@ class PhysicsConfig:
                 'hue_sensitivity': self.hue_sensitivity,
                 'color_by_cohort': self.color_by_cohort,
                 'watercolor_mode': self.watercolor_mode,
-                'emboss_mode': self.emboss_mode,
-                'emboss_intensity': self.emboss_intensity,
-                'emboss_smoothness': self.emboss_smoothness,
             },
             'rule': self.rule.flatten().tolist(),
             'notes': self.notes,
@@ -218,9 +212,6 @@ class PhysicsConfig:
             hue_sensitivity=appearance.get('hue_sensitivity', 0.5),
             color_by_cohort=appearance.get('color_by_cohort', True),
             watercolor_mode=appearance.get('watercolor_mode', False),
-            emboss_mode=appearance.get('emboss_mode', 0),
-            emboss_intensity=appearance.get('emboss_intensity', 0.5),
-            emboss_smoothness=appearance.get('emboss_smoothness', 0.1),
             rule=rule,
             notes=notes,
             force_field_strength=force_field_strength,
@@ -281,9 +272,6 @@ class ConfigSaver:
             hue_sensitivity=sim_state.hue_sensitivity,
             color_by_cohort=sim_state.color_by_cohort,
             watercolor_mode=sim_state.watercolor_mode,
-            emboss_mode=sim_state.emboss_mode,
-            emboss_intensity=sim_state.emboss_intensity,
-            emboss_smoothness=sim_state.emboss_smoothness,
             rule=rule.copy(),
             notes=sim_state.notes,
             force_field_strength=field_strengths[0] if field_strengths else None,
@@ -348,9 +336,6 @@ class ConfigSaver:
         sim_state.hue_sensitivity = config.hue_sensitivity
         sim_state.color_by_cohort = config.color_by_cohort
         sim_state.watercolor_mode = watercolor_override if watercolor_override is not None else config.watercolor_mode
-        sim_state.emboss_mode = config.emboss_mode
-        sim_state.emboss_intensity = config.emboss_intensity
-        sim_state.emboss_smoothness = config.emboss_smoothness
 
         # User notes
         sim_state.notes = config.notes
@@ -461,9 +446,6 @@ class ConfigSaver:
         hue_sensitivity = 0.5
         color_by_cohort = True
         watercolor_mode = False
-        emboss_mode = 0
-        emboss_intensity = 0.5
-        emboss_smoothness = 0.1
         parameter_sweeps_enabled = False
         x_sweeps = _default_sweeps()
         y_sweeps = _default_sweeps()
@@ -483,8 +465,9 @@ class ConfigSaver:
 
         # Version 5+: appearance and sweeps
         if version >= 6 and len(data) >= 405:
+            # Emboss fields still occupy their bytes on disk; read and discard them.
             _, ink_weight, hue_sensitivity, color_by_cohort, watercolor_mode, \
-                emboss_intensity, emboss_smoothness, emboss_mode = struct.unpack('<fff??ffi', data[378:404])
+                _emboss_intensity, _emboss_smoothness, _emboss_mode = struct.unpack('<fff??ffi', data[378:404])
             parameter_sweeps_enabled, = struct.unpack('?', data[404:405])
             offset = 405
             x_sweep_data, offset = self._decode_legacy_sweep(data, offset)
@@ -498,8 +481,9 @@ class ConfigSaver:
             if cohort_sweep_data:
                 cohort_sweeps[cohort_sweep_data[0]] = cohort_sweep_data[1]
         elif len(data) >= 401:
+            # Emboss fields still occupy their bytes on disk; read and discard them.
             _, ink_weight, hue_sensitivity, color_by_cohort, watercolor_mode, \
-                emboss_intensity, emboss_smoothness = struct.unpack('<fff??ff', data[378:400])
+                _emboss_intensity, _emboss_smoothness = struct.unpack('<fff??ff', data[378:400])
             parameter_sweeps_enabled, = struct.unpack('?', data[400:401])
             offset = 401
             x_sweep_data, offset = self._decode_legacy_sweep(data, offset)
@@ -539,9 +523,6 @@ class ConfigSaver:
             hue_sensitivity=hue_sensitivity,
             color_by_cohort=color_by_cohort,
             watercolor_mode=watercolor_mode,
-            emboss_mode=emboss_mode,
-            emboss_intensity=emboss_intensity,
-            emboss_smoothness=emboss_smoothness,
             rule=rule,
         )
 

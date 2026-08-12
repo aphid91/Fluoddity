@@ -159,7 +159,7 @@ class App:
 
         # 1. Get current UI state
         ui_state = self.ui.get_state()
-        tiling_mode = (ui_state.sim.current_view_option == 3)
+        tiling_mode = (ui_state.sim.current_view_option == 2)
 
         # 2. Process one-shot commands
         result = self.command_handler.process_commands(ui_state, tiling_mode)
@@ -227,7 +227,7 @@ class App:
         self.camera.BRIGHTNESS = ui_state.preferences.brightness
 
         # 5.0.1 Force/Strafe field view modes: override view_tex with field texture
-        if ui_state.sim.current_view_option in (4, 5):
+        if ui_state.sim.current_view_option in (3, 4):
             field_tex = self.advanced_drawing_processor.field_texture
             if field_tex is not None:
                 self.sim.view_tex = field_tex
@@ -267,7 +267,7 @@ class App:
         sweep_reticle_pos = (sweep_reticle_x, sweep_reticle_y)
 
         # Reposition camera when leaving tiling mode
-        if self.prev_view_option == 3 and ui_state.sim.current_view_option != 3:
+        if self.prev_view_option == 2 and ui_state.sim.current_view_option != 2:
             ui_state.camera.position[0] = np.fmod(ui_state.camera.position[0] + 100.0, 2.0) - 1.0
             ui_state.camera.position[1] = np.fmod(ui_state.camera.position[1] + 100.0, 2.0) - 1.0
         self.prev_view_option = ui_state.sim.current_view_option
@@ -328,14 +328,6 @@ class App:
     def _render_camera_view(self, ui_state, sweep_mode, sweep_reticle_pos,
                              sweep_reticle_visible, screen_aspect, tiling_mode):
         """Render the camera view to screen."""
-        emboss_mode = ui_state.sim.emboss_mode
-        if emboss_mode == 1:
-            emboss_tex = self.sim.can
-        elif emboss_mode == 2:
-            emboss_tex = self.sim.brush_tex
-        else:
-            emboss_tex = None
-
         draw_trail_mode = ui_state.preferences.mouse_mode == "Draw Trail"
 
         width, height = glfw.get_framebuffer_size(self.window)
@@ -352,10 +344,6 @@ class App:
             screen_aspect=screen_aspect,
             watercolor_mode=ui_state.sim.watercolor_mode,
             ink_weight=ui_state.sim.ink_weight,
-            emboss_tex=emboss_tex,
-            emboss_mode=emboss_mode,
-            emboss_intensity=ui_state.sim.emboss_intensity,
-            emboss_smoothness=ui_state.sim.emboss_smoothness,
             draw_trail_mode=draw_trail_mode,
             draw_size=ui_state.preferences.draw_size,
             mouse_screen_coords=mouse_screen_coords,

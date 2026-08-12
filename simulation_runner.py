@@ -170,18 +170,6 @@ class SimulationRunner:
 
         return draw_mode, mouse_tex_coords, draw_power_value
 
-    def _get_emboss_params(self, ui_state):
-        """Get emboss texture and effective intensity from ui_state."""
-        emboss_mode = ui_state.sim.emboss_mode
-        if emboss_mode == 1:
-            emboss_tex = self.sim.can
-        elif emboss_mode == 2:
-            emboss_tex = self.sim.brush_tex
-        else:
-            emboss_tex = None
-        effective_emboss_intensity = 0.0 if emboss_mode == 0 else ui_state.sim.emboss_intensity
-        return emboss_tex, emboss_mode, effective_emboss_intensity
-
     def _get_trail_draw_radius(self, ui_state):
         """Calculate trail draw radius (0 when recording, screenshotting, sweeping, or not in Draw Trail mode)."""
         if ui_state.preferences.mouse_mode != "Draw Trail":
@@ -202,8 +190,6 @@ class SimulationRunner:
         These are shared between motion-blur and non-motion-blur paths.
         Only total_samples and current_sample_index differ between the two.
         """
-        emboss_tex, emboss_mode, effective_emboss_intensity = self._get_emboss_params(ui_state)
-
         adv_prefs = ui_state.preferences
         advanced_active = adv_prefs.advanced_drawing_enabled
 
@@ -217,11 +203,8 @@ class SimulationRunner:
             exposure=ui_state.preferences.exposure,
             ink_weight=ui_state.sim.ink_weight,
             watercolor_mode=ui_state.sim.watercolor_mode,
-            emboss_tex=emboss_tex,
             camera_position=tuple(self.camera.position),
             camera_zoom=self.camera.zoom,
-            emboss_intensity=effective_emboss_intensity,
-            emboss_smoothness=ui_state.sim.emboss_smoothness,
             trail_draw_radius=self._get_trail_draw_radius(ui_state),
             mouse_screen_coords=mouse_screen_coords,
             tiling_mode=tiling_mode,

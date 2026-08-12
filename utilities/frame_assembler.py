@@ -70,8 +70,8 @@ class FrameAssembler:
     def assemble_frame(self, input_texture, total_samples, current_sample_index, view_mode=0,
                        sweep_mode=False, sweep_reticle_pos=(0.5, 0.5), sweep_reticle_visible=False,
                        screen_aspect=1.0, brightness=1.0, exposure=0.0, ink_weight=1.0, watercolor_mode=False,
-                       emboss_tex=None, camera_position=(0.0, 0.0), camera_zoom=1.0,
-                       emboss_intensity=0.0, emboss_smoothness=0.1, trail_draw_radius=0.0,
+                       camera_position=(0.0, 0.0), camera_zoom=1.0,
+                       trail_draw_radius=0.0,
                        mouse_screen_coords=(0.5, 0.5), tiling_mode=False, view_min=(0.0, 0.0),
                        view_max=(0.0, 0.0), tiling_scale=(1.0, 1.0), canvas_resolution=(1024, 1024),
                        tonemap_softness=1.0,
@@ -86,7 +86,7 @@ class FrameAssembler:
             input_texture: moderngl.Texture to accumulate (PRE-gamma)
             total_samples: Number of frames in accumulation cycle
             current_sample_index: 0-indexed sample number (0 to total_samples-1)
-            view_mode: Current view mode (0=can, 1=brush_tex, 2=cam_brush)
+            view_mode: Current view mode (0=can, 1=cam_brush)
             sweep_mode: Whether parameter sweeps are active
             sweep_reticle_pos: (x, y) screen UV position of sweep reticle
             sweep_reticle_visible: Whether to show the reticle
@@ -95,11 +95,8 @@ class FrameAssembler:
             exposure: Frame blending amount (0=disabled, 1=long exposure)
             ink_weight: Watercolor mode optical density control
             watercolor_mode: Whether to use watercolor rendering
-            emboss_tex: Texture for emboss effect (canvas or brush based on mode)
             camera_position: Camera position in world space (x, y)
             camera_zoom: Camera zoom level
-            emboss_intensity: Emboss effect intensity (0 when mode is Off)
-            emboss_smoothness: Emboss sampling epsilon
 
         Returns:
             The assembled texture if final sample, None if still accumulating
@@ -132,15 +129,12 @@ class FrameAssembler:
         # Bind textures
         input_texture.use(location=0)  # input_frame
         self.resources['accumulation_texture'].use(location=1)  # accumulation_buffer
-        if emboss_tex is not None:
-            emboss_tex.use(location=2)  # emboss_tex
         if field_texture is not None:
             field_texture.use(location=3)  # field_texture
 
         # Set uniforms
         self.resources['shader']['input_frame'] = 0
         self.resources['shader']['accumulation_buffer'] = 1
-        tryset(self.resources['shader'], 'emboss_tex', 2)
         self.resources['shader']['is_first_frame'] = is_first_frame
         self.resources['shader']['final_sample'] = final_sample
         tryset(self.resources['shader'], 'view_mode', view_mode)
@@ -154,11 +148,9 @@ class FrameAssembler:
         tryset(self.resources['shader'], 'WATERCOLOR_MODE', watercolor_mode)
         tryset(self.resources['shader'], 'TRAIL_DRAW_RADIUS', trail_draw_radius)
         tryset(self.resources['shader'], 'mouse_screen_coords', mouse_screen_coords)
-        # Camera and emboss uniforms
+        # Camera uniforms
         tryset(self.resources['shader'], 'camera_position', camera_position)
         tryset(self.resources['shader'], 'camera_zoom', camera_zoom)
-        tryset(self.resources['shader'], 'EMBOSS_INTENSITY', emboss_intensity)
-        tryset(self.resources['shader'], 'EMBOSS_SMOOTHNESS', emboss_smoothness)
         # Tiling mode uniforms
         tryset(self.resources['shader'], 'tiling_mode_enabled', tiling_mode)
         tryset(self.resources['shader'], 'view_min', view_min)
