@@ -3,15 +3,10 @@
 in vec2 uv;
 in vec4 pos_vel;
 in vec4 view_col;
-out vec4 brush_out;
+out vec2 brush_out;  // RG32F output: velocity only
 
 uniform int frame_count;
-
-vec3 hsv2rgb(vec3 c) {
-  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
-}
+uniform float trail_persistence;
 
 float gaussian(vec2 pos, float sigma) {
     float sigma2 = sigma * sigma;
@@ -21,14 +16,21 @@ float gaussian(vec2 pos, float sigma) {
 }
 
 void main() {
-    // Clear to black on frame 0 to prevent garbage data
     if (frame_count == 0) {
-        brush_out = vec4(0, 0, 0, 1);
+        brush_out = vec2(0);
         return;
     }
 
     float kernel_func = gaussian(uv - .5, .163);
     if (length(uv - .5) > .5 || view_col.w == 0) { discard; }
     vec2 vel = pos_vel.zw;
-    brush_out = vec4(vel, .01, 1) * kernel_func;
+
+    // The old pipeline used SRC_ALPHA blending with alpha = kernel_func,
+    // which effectively squared the kernel (once in output, once via alpha blend).
+    // With ONE,ONE blending we must square it explicitly to match.
+    // Scale by (1-p) to match old blend: canvas = blur(canvas)*p + (1-p)*brush
+    float p = clamp(trail_persistence, 0.001, 0.999);
+    float prescale = (1.0 - p);
+
+    brush_out = vel * prescale * kernel_func * kernel_func;
 }

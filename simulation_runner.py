@@ -111,13 +111,9 @@ class SimulationRunner:
         if ui_state.request_clear_canvas:
             self.sim.clear_canvas()
 
-        # Handle clear canvas + brush + fields request
+        # Handle clear canvas + fields request
         if ui_state.request_clear_canvas_and_fields:
             self.sim.clear_canvas()
-            old_fbo = self.sim.ctx.fbo
-            self.sim.brush.use()
-            self.sim.ctx.clear(0, 0, 0, 0)
-            old_fbo.use()
             self.advanced_drawing_processor.clear_fields()
 
         # Build shared frame assembly kwargs (used by both paths)

@@ -2,9 +2,8 @@
 
 in vec2 texcoord;
 
-uniform sampler2D brush_tex;
 uniform sampler2D can_tex;
-out vec4 can_out;
+out vec2 can_out;
 
 // Draw trail mode uniforms
 uniform bool draw_mode;
@@ -104,22 +103,22 @@ float calculate_setting(PhysicsSetting setting, vec2 pos, float cohort){
     return result;
 }
 
-vec4 getCan(vec2 p, sampler2D sam) {
+vec2 getCan(vec2 p, sampler2D sam) {
     vec2 uv = (BOUNDARY_CONDITIONS_MODE == 2) ? fract(p) : p;
-    return texture(sam, uv);
+    return texture(sam, uv).rg;
 }
 
-vec4 getBlur(vec2 pos, sampler2D sam,float diffusion_constant) {
+vec2 getBlur(vec2 pos, sampler2D sam,float diffusion_constant) {
     ivec2 imsz = textureSize(sam, 0);
     vec3 off = vec3(1. / vec2(imsz), 0);
     vec2 np = pos + off.zy;
     vec2 sp = pos - off.zy;
     vec2 wp = pos - off.xz;
     vec2 ep = pos + off.xz;
-    vec4 nc = getCan(np, sam);
-    vec4 sc = getCan(sp, sam);
-    vec4 wc = getCan(wp, sam);
-    vec4 ec = getCan(ep, sam);
+    vec2 nc = getCan(np, sam);
+    vec2 sc = getCan(sp, sam);
+    vec2 wc = getCan(wp, sam);
+    vec2 ec = getCan(ep, sam);
     float K = diffusion_constant;
     return (getCan(pos, sam) * K + nc + sc + wc + ec) / (4. + K);
 }
@@ -164,14 +163,13 @@ float draw_kernel(float distance, float size) {
 }
 
 void main() {
-    // Clear to black on frame 0 to prevent garbage data
+    // Clear to zero on frame 0 to prevent garbage data
     if (frame_count == 0) {
-        can_out = vec4(0, 0, 0, 1);
+        can_out = vec2(0);
         return;
     }
 
-    vec4 brush_color = texture(brush_tex, texcoord);
-    vec4 can_color;
+    vec2 can_color;
     // Map texcoord to entity space for parameter sweeps
     float _ca = canvas_resolution.x / canvas_resolution.y;
     vec2 entity_space_pos = (texcoord * 2.0 - 1.0) * vec2(sqrt(_ca), 1.0/sqrt(_ca));
@@ -183,13 +181,13 @@ void main() {
         can_color = getBlur(texcoord, can_tex,TRAIL_DIFFUSION);
     }
     else{
-        can_color = texture(can_tex,texcoord);
+        can_color = texture(can_tex,texcoord).rg;
     }
 
     // Use entity space position for position-based sweeps
     float trail_persistence = calculate_setting(TRAIL_PERSISTENCE_SETTING, entity_space_pos, 0.0);
     trail_persistence = clamp(trail_persistence,0.0,0.999);
-    can_out = can_color * trail_persistence + (1 - trail_persistence) * brush_color;
+    can_out = can_color * trail_persistence;
 
     // Draw trail mode: add velocity based on mouse drag
     if (draw_mode && canvas_draw_active && draw_power > 0.0) {
@@ -228,7 +226,7 @@ void main() {
 
         // Apply Gaussian kernel and add to velocity channels (RG)
         float kernel_weight = draw_kernel(distance_to_mouse, draw_size);
-        can_out.xy += draw_vector * kernel_weight/draw_size*(1-trail_persistence);
+        can_out += draw_vector * kernel_weight/draw_size*(1-trail_persistence);
     }
 
     // Right-click eraser: hard circle erase within draw_size radius
@@ -247,7 +245,7 @@ void main() {
             erase_distance = length(aspect_correct_uv(texcoord - mouse));
         }
         if (erase_distance < draw_size*2) {//Match the reticle size from frame_assembly.frag
-            can_out = vec4(0.0, 0.0, 0.0, 1.0);
+            can_out = vec2(0.0);
         }
     }
 
@@ -272,6 +270,6 @@ void main() {
             fill_vector = len > 0.0 ? corrected / len : vec2(0.0);
         }
         fill_vector *= draw_power / 5.0;
-        can_out.xy += .25*fill_vector;
+        can_out += .25*fill_vector;
     }
 }

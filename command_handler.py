@@ -127,7 +127,12 @@ class CommandHandler:
 
         # Handle mouse clicks
         if not restored_sweep_preview:
-            self._handle_mouse_clicks(ui_state, tiling_mode)
+            canvas_aspect_ratio = ui_state.preferences.canvas_aspect_ratio
+            #convert aspect string to tuple of floats
+            canvas_aspect_ratio = tuple(float(x) for x in canvas_aspect_ratio.split(":"))
+            #convert to ratio
+            canvas_aspect_ratio = canvas_aspect_ratio[1]/canvas_aspect_ratio[0]
+            self._handle_mouse_clicks(ui_state, tiling_mode, canvas_aspect_ratio)
 
         # Handle config save/load/delete
         self._handle_config_commands(ui_state)
@@ -210,13 +215,13 @@ class CommandHandler:
                 return True
         return False
 
-    def _handle_mouse_clicks(self, ui_state, tiling_mode):
+    def _handle_mouse_clicks(self, ui_state, tiling_mode, canvas_aspect_ratio):
         """Handle left/right mouse click behavior based on mode."""
         if ui_state.left_click_this_frame:
             if ui_state.sim.parameter_sweeps_enabled:
-                self._handle_sweep_click(ui_state, tiling_mode)
+                self._handle_sweep_click(ui_state, tiling_mode, canvas_aspect_ratio)
             elif ui_state.preferences.mouse_mode == "Select Particle":
-                self._handle_entity_pick(ui_state, tiling_mode)
+                self._handle_entity_pick(ui_state, tiling_mode, canvas_aspect_ratio)
 
         elif ui_state.right_click_this_frame:
             if ui_state.sim.parameter_sweeps_enabled:
@@ -230,7 +235,7 @@ class CommandHandler:
                         ui_state.sim.rule_seed = prev_seed
                     self.sim.apply_rule(prev_rule)
 
-    def _handle_sweep_click(self, ui_state, tiling_mode):
+    def _handle_sweep_click(self, ui_state, tiling_mode, canvas_aspect_ratio):
         """Handle left click when parameter sweeps are enabled."""
         if not (self.sim.has_active_xy_sweep() or self.sim.has_active_cohort_sweep()):
             return
@@ -246,12 +251,14 @@ class CommandHandler:
         world_pos = (tex_coords[0] * 2 - 1, tex_coords[1] * 2 - 1)
 
         if self.sim.has_active_cohort_sweep():
-            entity_id, entity_pos, entity_cohort = self.entity_picker.find_nearest_entity(tex_coords)
+            entity_id, entity_pos, entity_cohort = self.entity_picker.find_nearest_entity(
+                tex_coords, canvas_aspect_ratio,
+                num_cohorts=ui_state.sim.num_cohorts, active_count=self.sim.entity_count)
             self.sim.update_sliders_from_particle(world_pos, entity_cohort)
         else:
             self.sim.update_sliders_from_position(world_pos)
 
-    def _handle_entity_pick(self, ui_state, tiling_mode):
+    def _handle_entity_pick(self, ui_state, tiling_mode, canvas_aspect_ratio):
         """Handle entity selection via left click in Select Particle mode."""
         tex_coords = self.camera.screen_to_tex(
             ui_state.mouse_pos, self.sim.view_tex.size
@@ -261,7 +268,9 @@ class CommandHandler:
                 np.fmod(tex_coords[0] + 10.0, 1.0),
                 np.fmod(tex_coords[1] + 10.0, 1.0)
             )
-        entity_id, entity_pos, entity_cohort = self.entity_picker.find_nearest_entity(tex_coords)
+        entity_id, entity_pos, entity_cohort = self.entity_picker.find_nearest_entity(
+            tex_coords, canvas_aspect_ratio,
+            num_cohorts=ui_state.sim.num_cohorts, active_count=self.sim.entity_count)
 
         if entity_id >= 0 and entity_id < self.sim.entity_count:
             print(f"Entity {entity_id} at pos {entity_pos}, cohort {entity_cohort} - requesting rule buffer update")

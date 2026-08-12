@@ -5,11 +5,10 @@ uniform vec2 canvas_resolution;
 struct Entity {
     vec2 pos;
     vec2 vel;
+    float hue;
     float size;
-    float cohort;      // Normalized cohort value (0-1) for parameter sweep calculations
-    float padding[2];  // Align to 16-byte boundary for vec4
-    vec4 color;
-};  // Total: 48 bytes (12 floats)
+    float padding[2];  // Align to 16-byte boundary
+};  // Total: 32 bytes (8 floats)
 layout(std430, binding = 0) buffer EntityBuffer {
     Entity entities[];
 };
@@ -48,5 +47,5 @@ void main() {
 
     uv = particle_uv;
     pos_vel=vec4(entity_pos,entity_vel);
-    view_col=entities[instance_id].color;
+    view_col=vec4(entities[instance_id].hue, 0.8, 1.0, 0.045);
 }

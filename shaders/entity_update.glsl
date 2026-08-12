@@ -5,11 +5,10 @@ layout(local_size_x = 64) in;
 struct Entity {
     vec2 pos;
     vec2 vel;
+    float hue;
     float size;
-    float cohort;      // Normalized cohort value (0-1) for parameter sweep calculations
-    float padding[2];  // Align to 16-byte boundary for vec4
-    vec4 color;
-};  // Total: 48 bytes (12 floats)
+    float padding[2];  // Align to 16-byte boundary
+};  // Total: 32 bytes (8 floats)
 struct Rule {
     FourierCenter centers[10];
 };
@@ -312,14 +311,14 @@ void pR(inout vec2 p, float a) {
 }
 
 
-//convert p (entity space) to texture coords and retrieve canvas
-vec4 get_can(vec2 p){
+//convert p (entity space) to texture coords and retrieve canvas (RG32F: velocity only)
+vec2 get_can(vec2 p){
     vec2 res=textureSize(canvas,0);
     float ca = res.x / res.y;
     vec2 half_extent = vec2(sqrt(ca), 1.0 / sqrt(ca));
     vec2 uv = p / (2.0 * half_extent) + 0.5;
     if(get_particle_boundary_conditions() == 2) uv = fract(uv);
-    return texture(canvas, uv);
+    return texture(canvas, uv).rg;
 }
 vec4 get_field(vec2 p){
     if(!advanced_drawing_resources_initialized)return vec4(0);
@@ -346,7 +345,6 @@ void reset(uint index){
     float cohort_val = get_cohort(index);
     float aspect = sqrt(canvas_resolution.x/canvas_resolution.y);
 
-    vec4 color=vec4(0,0,1,.045);
     //set pos and vel to random values on a small disk
     float cohort_scale = 0.019;//Size of each disk
     vec2 pos=cohort_scale*vec2(hash(vec2(cohort_val)),hash(vec2(cohort_val+index+2.142)));
@@ -381,7 +379,7 @@ void reset(uint index){
 
     
     //store to persistent entity buffer
-    entities[index]=Entity(pos,vel,size,cohort_val/float(cohorts),float[2](0,0),color);
+    entities[index]=Entity(pos,vel, 0.50, size, float[2](0,0));
 }
 
 //randomly change noise function parameters, scaled by parameter amount. 
@@ -464,7 +462,7 @@ void main() {
 
     // Inactive entities get zeroed out. Position offscreen so they don't accidentally get clicked on
     if (index >= ACTIVE_COUNT) {
-        entities[index] = Entity(vec2(10000), vec2(0), 0.0, 0.0, float[2](0,0), vec4(0));
+        entities[index] = Entity(vec2(10000), vec2(0), 0.0, 0.0, float[2](0,0));
         return;
     }
     Entity e=entities[index];
@@ -505,9 +503,9 @@ void main() {
     pR(left_sensor_offset,calculate_setting(get_particle_sensor_angle(),e.pos,cohort)*PI);//rotate them opposite directions
     pR(right_sensor_offset,-calculate_setting(get_particle_sensor_angle(),e.pos,cohort)*PI);
 
-    //read the trails from canvas
-    vec4 ltap = get_can(e.pos+left_sensor_offset);
-    vec4 rtap = get_can(e.pos+right_sensor_offset);
+    //read the trails from canvas (RG32F: velocity only)
+    vec2 ltap = get_can(e.pos+left_sensor_offset);
+    vec2 rtap = get_can(e.pos+right_sensor_offset);
 
     
     //rescale sensor values
@@ -519,25 +517,17 @@ void main() {
     vec2 strafe =vec2(0);
     vec2 force = vec2(0);
     vec2 col_params = vec2(0);
-    calculate_entity_behavior(ltap.xy,rtap.xy,orientation,current_rule,e.pos,cohort,force,strafe,col_params);
+    calculate_entity_behavior(ltap,rtap,orientation,current_rule,e.pos,cohort,force,strafe,col_params);
 
     //rescale output forces
     force *= 1./SQRT_WORLD_SIZE*calculate_setting(get_particle_global_force_mult(),e.pos,cohort)/400.;
     strafe *= 1./SQRT_WORLD_SIZE*calculate_setting(get_particle_global_force_mult(),e.pos,cohort)/20.;
 
 
-    //e.color is interpreted as vec4(hue,saturation,brightness,alpha)
-    //We just set brightness to 1 and modulate hue and saturation
-    e.color.x = get_particle_hue_sensitivity()*col_params.x;//hue can be anything
-    //Hardcoding saturation for now. 
-    //low saturation arises naturally due to a mix of hues from different particles. 
-    //Use col_params.y for something else?
-    //e.color.y = sin(col_params.y)/2.+.5;//saturation must be 0..1
-    e.color.y = .8;
-
-    if(get_particle_color_by_cohort()) {e.color.x = hash(vec2(floor(cohort)));} //just assign a random hue to each cohort
-    e.color.z=1;//brightness 1.
-    e.color.w=0.045; //low alpha
+    //Set entity hue. Saturation (.8), brightness (1.0) and alpha (0.045) were
+    //always constant, so they are rebuilt in the vertex shaders instead of stored.
+    e.hue = get_particle_hue_sensitivity()*col_params.x;//hue can be anything
+    if(get_particle_color_by_cohort()) {e.hue = hash(vec2(floor(cohort)));} //just assign a random hue to each cohort
 
     //Accelerate: Apply drag and add force to e.vel,
     e.vel = e.vel*calculate_setting(get_particle_drag(),e.pos,cohort) + force;
