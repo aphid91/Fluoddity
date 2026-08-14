@@ -27,8 +27,28 @@ class StreamlineService:
         self.path_buffer = None
         self.vao = None
         self._frame = 0
+        self._max_line_width = self._query_max_line_width()
         self._compile()
         self._allocate()
+
+    def _query_max_line_width(self) -> float:
+        """Largest line width the driver will actually rasterize.
+
+        Core profile only guarantees 1.0, but NVIDIA honours the full aliased
+        range. Reporting the real number lets the UI cap its slider instead of
+        offering widths that silently do nothing.
+        """
+        try:
+            rng = self.ctx.info.get('GL_ALIASED_LINE_WIDTH_RANGE')
+            if rng:
+                return float(max(1.0, rng[1]))
+        except Exception:
+            pass
+        return 1.0
+
+    @property
+    def max_line_width(self) -> float:
+        return self._max_line_width
 
     def _compile(self) -> bool:
         """Compile both programs. Returns True if both succeeded.
@@ -147,7 +167,17 @@ class StreamlineService:
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
 
+        # glLineWidth is global state, so restore it afterwards rather than
+        # leaving a fat line width set for whatever draws next.
+        width = min(max(1.0, float(settings.line_width)), self._max_line_width)
+        prev_width = self.ctx.line_width
+        if width != prev_width:
+            self.ctx.line_width = width
+
         self.vao.render(mode=moderngl.LINE_STRIP, vertices=steps, instances=count)
+
+        if width != prev_width:
+            self.ctx.line_width = prev_width
 
         self.ctx.disable(moderngl.BLEND)
 

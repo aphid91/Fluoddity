@@ -44,3 +44,7 @@ class StreamlineState:
     # Appearance
     color: tuple = (1.0, 0.85, 0.2)  # Line color (RGB)
     opacity: float = 0.9  # Line alpha
+    # Line thickness via glLineWidth. Core profile only guarantees 1.0, but
+    # NVIDIA honours the full aliased range; the service clamps to whatever
+    # the driver reports and silently falls back to 1px elsewhere.
+    line_width: float = 1.0

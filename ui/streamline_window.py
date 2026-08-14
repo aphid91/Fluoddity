@@ -123,4 +123,21 @@ class StreamlineWindowMixin:
                 "Opacity", s.opacity, 0.0, 1.0, format="%.2f"
             )
 
+            # Cap the slider at what this driver will actually rasterize.
+            svc = getattr(self, 'streamline_service', None)
+            max_width = svc.max_line_width if svc is not None else 1.0
+            if max_width > 1.0:
+                _, s.line_width = imgui.slider_float(
+                    "Line Width", s.line_width, 1.0, max_width, format="%.1f"
+                )
+                self._delayed_tooltip(
+                    "Line thickness in pixels (glLineWidth).\n"
+                    f"This driver supports up to {max_width:.0f}px."
+                )
+            else:
+                imgui.text_disabled("Line Width: 1px (driver max)")
+                self._delayed_tooltip(
+                    "This driver only rasterizes 1px lines in core profile."
+                )
+
         imgui.end()

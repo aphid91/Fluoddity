@@ -71,6 +71,7 @@ class App:
         self.advanced_drawing_processor = AdvancedDrawingProcessor(self.ctx)
         self.ui.multi_load_service = self.multi_load_service
         self.ui.advanced_drawing_processor = self.advanced_drawing_processor
+        self.ui.streamline_service = self.streamline_service
 
         # Physics configs directories
         self.app_configs_dir = get_app_physics_configs_dir()
