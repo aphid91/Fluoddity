@@ -172,6 +172,7 @@ class UI(
         # One-shot flags (reset after get_state)
         self._left_click_pending = False
         self._right_click_pending = False
+        self._middle_click_pending = False
         self._any_left_click_pending = False  # Includes imgui clicks
         self._any_right_click_pending = False  # Includes imgui clicks
         self._scroll_delta = 0.0
@@ -320,6 +321,8 @@ class UI(
             self._left_click_pending = True
         elif button == glfw.MOUSE_BUTTON_RIGHT:
             self._right_click_pending = True
+        elif button == glfw.MOUSE_BUTTON_MIDDLE:
+            self._middle_click_pending = True
 
     def cursor_pos_callback(self, window, xpos, ypos):
         if self.imgui_cursor_callback:
@@ -423,6 +426,7 @@ class UI(
         self.state.mouse_pos = self._mouse_pos
         self.state.left_click_this_frame = self._left_click_pending
         self.state.right_click_this_frame = self._right_click_pending
+        self.state.middle_click_this_frame = self._middle_click_pending
         self.state.any_left_click_this_frame = self._any_left_click_pending
         self.state.any_right_click_this_frame = self._any_right_click_pending
 
@@ -488,6 +492,7 @@ class UI(
         # Reset one-shot flags
         self._left_click_pending = False
         self._right_click_pending = False
+        self._middle_click_pending = False
         self._any_left_click_pending = False
         self._any_right_click_pending = False
         self._scroll_delta = 0.0

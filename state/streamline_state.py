@@ -36,6 +36,11 @@ class StreamlineState:
     initial_speed: float = 0.5  # Max magnitude of the random launch velocity
     resample_each_frame: bool = True  # Redraw launch directions every frame
 
+    # Seed pinning (middle-click toggles). While pinned the streamlines stay
+    # anchored at pinned_seed instead of following the cursor.
+    seed_pinned: bool = False
+    pinned_seed: tuple = (0.0, 0.0)  # World space [-1, 1]
+
     # Appearance
     color: tuple = (1.0, 0.85, 0.2)  # Line color (RGB)
     opacity: float = 0.9  # Line alpha

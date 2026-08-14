@@ -24,6 +24,7 @@ class UIState:
     # One-shot click events (reset after get_state)
     left_click_this_frame: bool = False
     right_click_this_frame: bool = False
+    middle_click_this_frame: bool = False
 
     # Any click events (includes clicks on imgui elements, for sweep restore)
     any_left_click_this_frame: bool = False

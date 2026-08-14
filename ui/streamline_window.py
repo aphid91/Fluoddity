@@ -22,6 +22,17 @@ class StreamlineWindowMixin:
                 "Releases a test particle at the cursor with no velocity and "
                 "traces its path through the canvas force field."
             )
+
+            # Seed pinning (middle-click in the viewport does the same thing)
+            if s.seed_pinned:
+                imgui.text(f"Seed pinned at ({s.pinned_seed[0]:.3f}, {s.pinned_seed[1]:.3f})")
+                imgui.same_line()
+                if imgui.small_button("Unpin"):
+                    s.seed_pinned = False
+            else:
+                imgui.text_disabled("Seed follows cursor")
+            self._delayed_tooltip("Middle-click in the viewport to pin or unpin the seed.")
+
             imgui.separator()
 
             _, s.steps = imgui.slider_int("Steps", s.steps, 2, MAX_STEPS)

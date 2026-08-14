@@ -319,18 +319,30 @@ class App:
         # 7.6. Render streamline overlay if enabled
         if ui_state.streamline.enabled:
             width, height = glfw.get_framebuffer_size(self.window)
+            streamline = ui_state.streamline
             # Seed at the cursor: screen pixels -> texture [0,1] -> world [-1,1]
             tex_x, tex_y = self.camera.screen_to_tex(
                 ui_state.mouse_pos, tex_size=self.sim.can.size
             )
+            cursor_seed = (tex_x * 2.0 - 1.0, tex_y * 2.0 - 1.0)
+
+            # Middle-click pins the seed in place (and unpins it again), so the
+            # streamlines stay put while the field evolves under them.
+            if ui_state.middle_click_this_frame:
+                streamline.seed_pinned = not streamline.seed_pinned
+                if streamline.seed_pinned:
+                    streamline.pinned_seed = cursor_seed
+
+            seed = streamline.pinned_seed if streamline.seed_pinned else cursor_seed
+
             self.streamline_service.render(
                 canvas_texture=self.sim.can,
-                seed_world=(tex_x * 2.0 - 1.0, tex_y * 2.0 - 1.0),
+                seed_world=seed,
                 cam_pos=tuple(self.camera.position),
                 cam_zoom=self.camera.zoom,
                 canvas_resolution=self.sim.can.size,
                 window_size=(width, height),
-                settings=ui_state.streamline,
+                settings=streamline,
             )
 
         # 8. Update UI display info and render
