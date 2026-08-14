@@ -4,6 +4,7 @@ from .camera_state import CameraState
 from .recording_state import RecordingState
 from .preferences_state import PreferencesState
 from .multi_load_state import MultiLoadState
+from .streamline_state import StreamlineState
 
 
 @dataclass
@@ -14,6 +15,7 @@ class UIState:
     recording: RecordingState = field(default_factory=RecordingState)
     preferences: PreferencesState = field(default_factory=PreferencesState)
     multi_load: MultiLoadState = field(default_factory=MultiLoadState)
+    streamline: StreamlineState = field(default_factory=StreamlineState)
 
     # Input state (updated by callbacks)
     keys_pressed: set = field(default_factory=set)

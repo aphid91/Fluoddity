@@ -5,7 +5,7 @@ import numpy as np
 from camera import Camera
 from sim import Sim, SIZE_OF_ENTITY_STRUCT
 from ui import UI
-from services import RuleManager, EntityPicker, VideoRecorderService, ConfigSaver, ArrowDebugService, MultiLoadService
+from services import RuleManager, EntityPicker, VideoRecorderService, ConfigSaver, ArrowDebugService, MultiLoadService, StreamlineService
 from services.field_handler import FieldHandler
 from services.parameter_lock_service import ParameterLockService
 from utilities.paths import initialize_user_data, get_user_physics_configs_dir, get_app_physics_configs_dir, get_screenshots_dir
@@ -66,6 +66,7 @@ class App:
         self.video_service = VideoRecorderService()
         self.config_saver = ConfigSaver()
         self.arrow_debug_service = ArrowDebugService(self.ctx)
+        self.streamline_service = StreamlineService(self.ctx)
         self.multi_load_service = MultiLoadService()
         self.advanced_drawing_processor = AdvancedDrawingProcessor(self.ctx)
         self.ui.multi_load_service = self.multi_load_service
@@ -87,7 +88,8 @@ class App:
             self.entity_picker, self.video_service, self.config_saver,
             self.multi_load_service, self.user_configs_dir,
             field_handler=self.field_handler,
-            param_lock_service=self.param_lock_service
+            param_lock_service=self.param_lock_service,
+            streamline_service=self.streamline_service
         )
         # Xbox controller (FPS camera for shader-driven field)
         self.controller_cam = ControllerCam()
@@ -314,6 +316,23 @@ class App:
                 use_zw_channels=use_zw,
             )
 
+        # 7.6. Render streamline overlay if enabled
+        if ui_state.streamline.enabled:
+            width, height = glfw.get_framebuffer_size(self.window)
+            # Seed at the cursor: screen pixels -> texture [0,1] -> world [-1,1]
+            tex_x, tex_y = self.camera.screen_to_tex(
+                ui_state.mouse_pos, tex_size=self.sim.can.size
+            )
+            self.streamline_service.render(
+                canvas_texture=self.sim.can,
+                seed_world=(tex_x * 2.0 - 1.0, tex_y * 2.0 - 1.0),
+                cam_pos=tuple(self.camera.position),
+                cam_zoom=self.camera.zoom,
+                canvas_resolution=self.sim.can.size,
+                window_size=(width, height),
+                settings=ui_state.streamline,
+            )
+
         # 8. Update UI display info and render
         self.ui.update_display_info({
             'time': self.sim.time,
@@ -391,6 +410,7 @@ class App:
         save_preferences(ui_state.preferences)
 
         self.advanced_drawing_processor.cleanup()
+        self.streamline_service.cleanup()
         self.video_service.cleanup()
         self.ui.cleanup()
         glfw.terminate()

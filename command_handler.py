@@ -13,7 +13,8 @@ class CommandHandler:
 
     def __init__(self, sim, camera, ui, rule_manager, entity_picker,
                  video_service, config_saver, multi_load_service, user_configs_dir,
-                 field_handler=None, param_lock_service=None):
+                 field_handler=None, param_lock_service=None,
+                 streamline_service=None):
         self.sim = sim
         self.camera = camera
         self.ui = ui
@@ -25,6 +26,7 @@ class CommandHandler:
         self.user_configs_dir = user_configs_dir
         self.field_handler = field_handler
         self.param_lock_service = param_lock_service
+        self.streamline_service = streamline_service
 
         # Preview state
         self.preview_rule_active = False  # File->load preview
@@ -109,6 +111,8 @@ class CommandHandler:
             self.camera.reload()
             if self.field_handler and self.field_handler.adv_draw:
                 self.field_handler.adv_draw.reload()
+            if self.streamline_service:
+                self.streamline_service.reload()
 
         # Simple reset (R key)
         if ui_state.request_reset:

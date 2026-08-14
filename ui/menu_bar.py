@@ -349,6 +349,16 @@ class MenuBarMixin:
                     "brush modes, force fields, and strafe fields."
                 )
 
+                # Streamline toggle
+                _, self.state.streamline.enabled = imgui.checkbox(
+                    "Streamline",
+                    self.state.streamline.enabled
+                )
+                self._delayed_tooltip(
+                    "Trace the path of a free particle released at the cursor\n"
+                    "and carried by the canvas force field."
+                )
+
                 # Multi Load toggle
                 _, self.state.multi_load.multi_load_enabled = imgui.checkbox(
                     "Multi Load - EXPERIMENTAL",
