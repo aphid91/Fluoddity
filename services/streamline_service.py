@@ -267,8 +267,10 @@ class StreamlineService:
         tryset(self.trace_program, 'AUDIO_ENABLED', bool(audio_on))
         if audio_on:
             audio_service.bind()
-            tryset(self.trace_program, 'AUDIO_VOICE',
-                   int(min(max(audio_settings.voice_index, 0), count - 1)))
+            voice_count = int(min(max(audio_settings.voice_count, 1), count))
+            tryset(self.trace_program, 'AUDIO_VOICE_COUNT', voice_count)
+            tryset(self.trace_program, 'AUDIO_LANE_STRIDE',
+                   audio_service.lane_stride)
             # With auto-gain the CPU applies amplitude after normalising, so
             # the shader must not scale as well or the gain would be squared.
             tryset(self.trace_program, 'AUDIO_AMPLITUDE',
@@ -295,6 +297,11 @@ class StreamlineService:
             self._dispatch_count += 1
             issued += 1
             if audio_on:
+                # Reduce the per-voice lanes into the mix before fencing, so
+                # the fence covers the reduction too and the readback sees a
+                # finished block.
+                self.ctx.memory_barrier()
+                audio_service.reduce(audio_settings, voice_count)
                 # Fence this block so the readback can poll it without
                 # stalling the pipeline.
                 audio_service.note_dispatch()

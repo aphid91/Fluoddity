@@ -31,14 +31,29 @@ class AudioWindowMixin:
 
             imgui.separator()
 
-            # === Voice ===
-            max_voice = max(0, min(s.count, MAX_STREAMLINES) - 1)
-            _, a.voice_index = imgui.slider_int(
-                "Voice Particle", a.voice_index, 0, max(0, max_voice)
+            # === Voices ===
+            max_voices = max(1, min(s.count, MAX_STREAMLINES))
+            _, a.voice_count = imgui.slider_int(
+                "Voice Count", a.voice_count, 1, max_voices,
+                flags=imgui.SliderFlags_.logarithmic
             )
             self._delayed_tooltip(
-                "Which streamline drives the voice.\n"
-                "Combining several particles comes later."
+                "How many particles contribute to the mix (the first N).\n"
+                "Independent of the streamline count: sonifying a whole\n"
+                "1024-particle swarm is mostly wash, and the reduction\n"
+                "cost scales with this."
+            )
+            if a.voice_count > s.count:
+                imgui.text_disabled(f"  clamped to {s.count} particles")
+
+            _, a.rms_normalise = imgui.checkbox(
+                "RMS Normalise", a.rms_normalise
+            )
+            self._delayed_tooltip(
+                "Scale the mix by 1/sqrt(voices) so the level holds steady\n"
+                "as Voice Count changes. The particles are near-independent\n"
+                "(measured correlation ~0.015), so their energy adds as\n"
+                "sqrt(n); dividing by n instead would fade toward silence."
             )
 
             _, a.amplitude = imgui.slider_float(

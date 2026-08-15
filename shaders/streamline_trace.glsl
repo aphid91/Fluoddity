@@ -38,8 +38,11 @@ layout(std430, binding = 6) buffer StreamlineState {
     ParticleState particles[];
 };
 
-// One float per sample for the voice particle. Written only when
-// AUDIO_ENABLED; slot k of the current block is index AUDIO_SLOT_BASE + k.
+// Per-voice audio lanes. Each contributing particle owns a lane of
+// AUDIO_LANE_STRIDE floats; sample k of the current block for voice v lives
+// at v * AUDIO_LANE_STRIDE + AUDIO_SLOT_BASE + k. A separate reduce pass
+// sums the lanes down to the mix, so no atomics are needed and the
+// summation order is deterministic.
 layout(std430, binding = 7) buffer StreamlineAudio {
     float audio_samples[];
 };
@@ -63,10 +66,11 @@ uniform uint DISPATCH_INDEX;        // Decorrelates the hazard roll per dispatch
 uniform float SEED_SCATTER;         // Radius of each particle's own spring target
 uniform uint RUN_SALT;              // Reseeds the whole population per reset
 
-// --- Audio voice (first pass: a single particle drives one voice) ---
+// --- Audio voices ---
 uniform bool AUDIO_ENABLED;
-uniform int AUDIO_VOICE;            // Which particle emits samples
-uniform int AUDIO_SLOT_BASE;        // Start index of this block in the ring
+uniform int AUDIO_VOICE_COUNT;      // Particles 0..N-1 each drive one voice
+uniform int AUDIO_LANE_STRIDE;      // Floats per voice lane (slots * block)
+uniform int AUDIO_SLOT_BASE;        // Start index of this block within a lane
 uniform float AUDIO_AMPLITUDE;
 uniform float AUDIO_HP_COEFF;       // One-pole high-pass coefficient
 uniform float AUDIO_RAMP_DEC;       // Per-sample decrement of the reset ramp
@@ -147,7 +151,9 @@ void main() {
 
     // Audio voice state. Carried across dispatches so the filter and the
     // post-reset ramp survive block boundaries.
-    bool is_voice = AUDIO_ENABLED && line_id == AUDIO_VOICE;
+    // The first AUDIO_VOICE_COUNT particles each drive a voice.
+    bool is_voice = AUDIO_ENABLED && line_id < AUDIO_VOICE_COUNT;
+    int lane = line_id * AUDIO_LANE_STRIDE + AUDIO_SLOT_BASE;
     float hp_x1 = particles[line_id].hp_x1;
     float hp_y1 = particles[line_id].hp_y1;
     float ramp = particles[line_id].ramp;
@@ -155,14 +161,15 @@ void main() {
     // A retired particle either sits out or restarts at the seed.
     if (alive == 0u) {
         if (!RESPAWN_AT_SEED) {
-            // The voice must still emit a full block even when its particle
-            // is retired, or the audio stream would develop holes.
+            // A voice must still fill its whole lane even when its particle
+            // is retired, or the mix would read stale samples from the
+            // previous time this slot was written.
             if (is_voice) {
                 for (int k = 0; k < STEPS_PER_DISPATCH; ++k) {
                     // Let the filter relax toward zero rather than freezing a
                     // DC offset in place.
                     hp_y1 *= AUDIO_HP_COEFF;
-                    audio_samples[AUDIO_SLOT_BASE + k] = hp_y1;
+                    audio_samples[lane + k] = hp_y1;
                 }
                 particles[line_id].hp_y1 = hp_y1;
             }
@@ -235,7 +242,7 @@ void main() {
                 if (is_voice) {
                     for (int j = k; j < STEPS_PER_DISPATCH; ++j) {
                         hp_y1 *= AUDIO_HP_COEFF;
-                        audio_samples[AUDIO_SLOT_BASE + j] = hp_y1;
+                        audio_samples[lane + j] = hp_y1;
                     }
                 }
                 break;
@@ -272,7 +279,7 @@ void main() {
                 ramp = max(0.0, ramp - AUDIO_RAMP_DEC);
             }
 
-            audio_samples[AUDIO_SLOT_BASE + k] = y;
+            audio_samples[lane + k] = y;
         }
     }
 

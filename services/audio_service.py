@@ -17,6 +17,8 @@ import sys
 import numpy as np
 
 from state.audio_state import AUDIO_BLOCK, AUDIO_SLOTS, AUDIO_RB_BLOCKS
+from state.streamline_state import MAX_STREAMLINES
+from utilities.gl_helpers import read_shader, tryset
 
 # GL sync constants. moderngl wraps none of these, so they come from the
 # driver directly.
@@ -30,7 +32,8 @@ GL_BUFFER_UPDATE_BARRIER_BIT = 0x00000200
 # GL uses __stdcall on Windows.
 _FUNC = ctypes.WINFUNCTYPE if sys.platform == "win32" else ctypes.CFUNCTYPE
 
-AUDIO_BINDING = 7
+AUDIO_BINDING = 7   # Per-voice lanes
+MIX_BINDING = 8     # Reduced mono mix
 
 
 def _gl(name, restype, *argtypes):
@@ -103,7 +106,9 @@ class AudioService:
     def __init__(self, ctx):
         self.ctx = ctx
         self.sync = None
-        self.buffer = None
+        self.buffer = None       # Per-voice lanes, written by the tracer
+        self.mix_buffer = None   # Reduced mono mix, read back to the CPU
+        self.mix_program = None
         self.fences = [None] * AUDIO_SLOTS
         self.w = 0                # Next slot to dispatch into
         self.r = 0                # Next slot to read back
@@ -131,9 +136,44 @@ class AudioService:
         if self.sync is None:
             self.sync = GLSync()
         if self.buffer is None:
+            # One lane of (AUDIO_SLOTS * AUDIO_BLOCK) floats per possible
+            # voice. 1024 * 16 * 512 * 4B = 33.6 MB.
             self.buffer = self.ctx.buffer(
+                np.zeros(MAX_STREAMLINES * self.lane_stride, dtype="f4").tobytes()
+            )
+        if self.mix_buffer is None:
+            self.mix_buffer = self.ctx.buffer(
                 np.zeros(AUDIO_SLOTS * AUDIO_BLOCK, dtype="f4").tobytes()
             )
+        if self.mix_program is None:
+            try:
+                self.mix_program = self.ctx.compute_shader(
+                    read_shader('shaders/streamline_audio_mix.glsl')
+                )
+            except Exception as e:
+                print('Audio mix shader compilation failed:')
+                print(e)
+                self.last_error = f"mix shader failed: {e}"
+
+    @property
+    def lane_stride(self) -> int:
+        """Floats per voice lane."""
+        return AUDIO_SLOTS * AUDIO_BLOCK
+
+    def reload(self):
+        """Recompile the mix shader. Called on the V-key shader reload."""
+        try:
+            prog = self.ctx.compute_shader(
+                read_shader('shaders/streamline_audio_mix.glsl')
+            )
+        except Exception as e:
+            print('Audio mix shader compilation failed:')
+            print(e)
+            return
+        if self.mix_program is not None:
+            self.mix_program.release()
+        self.mix_program = prog
+        print('Audio mix shader reloaded')
 
     def start(self, settings) -> bool:
         """Open the output stream. Returns True on success."""
@@ -200,22 +240,42 @@ class AudioService:
 
     def cleanup(self):
         self.stop()
-        if self.buffer is not None:
-            self.buffer.release()
-            self.buffer = None
+        for name in ('buffer', 'mix_buffer', 'mix_program'):
+            obj = getattr(self, name, None)
+            if obj is not None:
+                obj.release()
+                setattr(self, name, None)
 
     # ------------------------------------------------------------------
     # Production
     # ------------------------------------------------------------------
     def bind(self):
-        """Bind the audio SSBO so the tracer can write into it."""
+        """Bind the audio SSBOs so the tracer can write into them."""
         self._ensure_gpu()
         self.buffer.bind_to_storage_buffer(AUDIO_BINDING)
+        self.mix_buffer.bind_to_storage_buffer(MIX_BINDING)
 
     @property
     def slot_base(self) -> int:
         """Sample index where the next dispatch should write its block."""
         return (self.w % AUDIO_SLOTS) * AUDIO_BLOCK
+
+    def reduce(self, settings, voice_count: int):
+        """Sum the per-voice lanes for the block just dispatched.
+
+        Runs before the fence, so the fence covers both the tracer's writes
+        and the reduction; the readback then sees a finished mix.
+        """
+        if self.mix_program is None:
+            return
+        n = max(1, int(voice_count))
+        gain = 1.0 / math.sqrt(n) if settings.rms_normalise else 1.0
+        tryset(self.mix_program, 'VOICE_COUNT', n)
+        tryset(self.mix_program, 'LANE_STRIDE', self.lane_stride)
+        tryset(self.mix_program, 'SLOT_BASE', self.slot_base)
+        tryset(self.mix_program, 'BLOCK_SIZE', AUDIO_BLOCK)
+        tryset(self.mix_program, 'MIX_GAIN', float(gain))
+        self.mix_program.run((AUDIO_BLOCK + 63) // 64, 1, 1)
 
     def can_dispatch(self) -> bool:
         """True while there is a free GPU slot.
@@ -249,8 +309,9 @@ class AudioService:
             if fence is None or not self.sync.signalled(fence):
                 break
             # The fence has signalled, so this is a plain memcpy, not a stall.
-            self.buffer.read_into(self.staging, size=AUDIO_BLOCK * 4,
-                                  offset=slot * AUDIO_BLOCK * 4)
+            # Read the reduced mix, not the per-voice lanes.
+            self.mix_buffer.read_into(self.staging, size=AUDIO_BLOCK * 4,
+                                      offset=slot * AUDIO_BLOCK * 4)
             self.sync.delete_sync(fence)
             self.fences[slot] = None
             self.r += 1

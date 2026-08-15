@@ -93,7 +93,8 @@ class App:
             self.multi_load_service, self.user_configs_dir,
             field_handler=self.field_handler,
             param_lock_service=self.param_lock_service,
-            streamline_service=self.streamline_service
+            streamline_service=self.streamline_service,
+            audio_service=self.audio_service
         )
         # Xbox controller (FPS camera for shader-driven field)
         self.controller_cam = ControllerCam()

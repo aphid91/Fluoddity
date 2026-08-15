@@ -31,7 +31,13 @@ class AudioState:
     show_window: bool = False  # Whether the Audio window is visible
 
     sample_rate: int = 48000  # Frames per second
-    voice_index: int = 0  # Which streamline drives the voice
+    # Particles 0..voice_count-1 each contribute a voice to the mix. Kept
+    # independent of the streamline count: sonifying a whole 1024-particle
+    # swarm is mostly wash, and the reduction cost scales with this.
+    voice_count: int = 1
+    # 1/sqrt(n) is RMS-preserving for near-independent voices, so the level
+    # holds steady as voice_count changes. 1/n would fade toward silence.
+    rms_normalise: bool = True
 
     amplitude: float = 0.3  # Output gain applied to dot(vel, field)
     # dot(velocity, field) is unnormalised: velocity accumulates force every
