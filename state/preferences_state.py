@@ -72,7 +72,11 @@ class PreferencesState:
     video_end_frame: int = 0  # Target frame for video to end on (0 = disabled, start immediately)
 
     # Simulation determinism
-    strong_determinism: bool = False  # Double-buffer canvas for fully deterministic simulation
+    # Double-buffer the canvas. Always on in practice: besides determinism,
+    # the second buffer is what gives the streamline audio a previous frame to
+    # interpolate the field against, without which the field is piecewise
+    # constant across dozens of audio samples and audibly zippers.
+    strong_determinism: bool = True
 
     # Parameter locks
     parameter_locks_enabled: bool = False  # Master toggle for parameter lock feature

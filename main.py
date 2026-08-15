@@ -81,6 +81,7 @@ class App:
         # User's own dispatch schedule, held while audio locks the clock.
         self._streamline_sched_backup = None
         self.audio_capture = None  # Offline audio capture while recording
+        self._last_render_dt = 1.0 / 60.0  # Smoothed render frame time
         self.multi_load_service = MultiLoadService()
         self.advanced_drawing_processor = AdvancedDrawingProcessor(self.ctx)
         self.ui.multi_load_service = self.multi_load_service
@@ -364,6 +365,9 @@ class App:
             self._streamline_last_time = now
             # Clamp so a hitch or a breakpoint cannot inject a huge dt.
             dt = min(max(dt, 0.0), 0.25)
+            if dt > 0.0:
+                # Smoothed, so one hitch does not swing the interpolation rate.
+                self._last_render_dt = self._last_render_dt * 0.9 + dt * 0.1
 
             # Audio drives the tracer clock when enabled, so open/close the
             # stream before stepping.
@@ -406,6 +410,8 @@ class App:
                     dt=dt,
                     audio_service=self.audio_service,
                     audio_settings=audio,
+                    prev_texture=self._prev_canvas(),
+                    samples_per_physics_step=self._samples_per_physics_step(ui_state),
                 )
                 if self.audio_service.active:
                     self.audio_service.pump(audio)
@@ -493,6 +499,41 @@ class App:
         self.screenshot_in_progress = False
         self.screenshot_saved_settings = {}
 
+    def _prev_canvas(self):
+        """The canvas as of the previous physics step.
+
+        Double buffering is forced on, so the texture that is not currently
+        being read holds the previous frame. Returns None if that is not the
+        case, and the tracer then falls back to no interpolation.
+        """
+        try:
+            other = self.sim.can_textures[1 - self.sim.can_read_index]
+        except (AttributeError, IndexError):
+            return None
+        return other if other is not self.sim.can else None
+
+    def _samples_per_physics_step(self, ui_state) -> float:
+        """Integration steps the tracer runs per canvas update.
+
+        The canvas only changes once per physics step, so this is how many
+        audio samples span one field update - the interval the field is
+        interpolated across.
+        """
+        speedmult = max(1, int(ui_state.preferences.speedmult))
+        if self.audio_capture is not None:
+            # Offline: a video frame is worth sample_rate/fps samples, spread
+            # over speedmult physics steps.
+            return (ui_state.audio.sample_rate / VIDEO_FPS) / speedmult
+        if ui_state.audio.enabled and self.audio_service.active:
+            # Realtime: physics advances speedmult steps per render frame.
+            render_fps = max(1.0, 1.0 / max(self._last_render_dt, 1e-3))
+            return ui_state.audio.sample_rate / (speedmult * render_fps)
+        # Visual only: the tracer's own schedule sets the pace.
+        streamline = ui_state.streamline
+        steps_per_sec = max(1.0, streamline.dispatch_hz * streamline.steps_per_dispatch)
+        render_fps = max(1.0, 1.0 / max(self._last_render_dt, 1e-3))
+        return steps_per_sec / (speedmult * render_fps)
+
     def _composite_streamlines_into_frame(self, assembled_tex, ui_state):
         """Draw the streamline overlay into a frame bound for the encoder."""
         streamline = ui_state.streamline
@@ -546,7 +587,9 @@ class App:
             return
         for block in self.streamline_service.render_audio_blocks(
                 self.sim.can, seed_world, ui_state.streamline,
-                self.audio_service, ui_state.audio, blocks):
+                self.audio_service, ui_state.audio, blocks,
+                prev_texture=self._prev_canvas(),
+                samples_per_physics_step=self._samples_per_physics_step(ui_state)):
             cap.add_block(block)
 
     def _finish_audio_capture(self):

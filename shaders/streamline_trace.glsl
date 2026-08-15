@@ -48,6 +48,15 @@ layout(std430, binding = 7) buffer StreamlineAudio {
 };
 
 uniform sampler2D canvas_texture;
+// The canvas as it was at the previous physics step. The canvas only updates
+// every physics step, which is dozens to hundreds of audio samples apart, so
+// sampling it directly makes the field piecewise constant and the audio
+// staircases audibly. Blending toward the current frame across the samples
+// between steps removes that.
+uniform sampler2D canvas_prev_texture;
+uniform bool FIELD_INTERPOLATE;
+uniform float FIELD_ALPHA_BASE;   // Blend fraction at the start of this block
+uniform float FIELD_ALPHA_STEP;   // Added per integration step
 
 uniform vec2 seed_pos;              // Cursor / pinned seed, world space [-1, 1]
 uniform int STEPS_PER_DISPATCH;     // Integration steps to advance this call
@@ -77,6 +86,25 @@ uniform float AUDIO_RAMP_DEC;       // Per-sample decrement of the reset ramp
 
 vec2 sample_field(vec2 world_pos) {
     return texture(canvas_texture, world_pos * 0.5 + 0.5).xy;
+}
+
+// Field at a point in time between the previous physics step and the current
+// one. alpha 0 = previous frame, 1 = current.
+//
+// The two textures only ever describe the most recent physics interval, so
+// alpha is clamped rather than wrapped. A dispatch that outruns that interval
+// holds at the current frame instead of replaying the same prev->cur sweep,
+// which would be a sawtooth - a different artifact rather than a fix. Keeping
+// the block short enough to sit inside one physics step is what makes the
+// interpolation cover the whole block (see AUDIO_MAX_STEPS_PER_PHYSICS).
+vec2 sample_field_lerp(vec2 world_pos, float alpha) {
+    vec2 uv = world_pos * 0.5 + 0.5;
+    vec2 cur = texture(canvas_texture, uv).xy;
+    if (!FIELD_INTERPOLATE) {
+        return cur;
+    }
+    vec2 prev = texture(canvas_prev_texture, uv).xy;
+    return mix(prev, cur, clamp(alpha, 0.0, 1.0));
 }
 
 bool out_of_bounds(vec2 world_pos) {
@@ -203,7 +231,10 @@ void main() {
             }
         }
 
-        vec2 force = sample_field(pos);
+        // Where this step sits between the previous physics frame and the
+        // current one.
+        float field_alpha = FIELD_ALPHA_BASE + FIELD_ALPHA_STEP * float(k);
+        vec2 force = sample_field_lerp(pos, field_alpha);
         vel += force * FORCE_SCALE;
 
         // Spring toward the seed, applied after the field so its own damping
@@ -263,7 +294,10 @@ void main() {
             // Project the particle's motion onto the field it is moving
             // through: large when it is being driven hard, near zero when it
             // drifts across a null.
-            float raw = dot(vel, sample_field(pos)) * AUDIO_AMPLITUDE;
+            // Same interpolated field the step used, so the sample and the
+            // motion that produced it agree.
+            float raw = dot(vel, sample_field_lerp(pos, field_alpha))
+                      * AUDIO_AMPLITUDE;
 
             // One-pole high pass (DC blocker). Carrying x1/y1 across a reset
             // turns the position discontinuity into a decaying step rather

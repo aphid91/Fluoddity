@@ -272,7 +272,11 @@ class SimulationRunner:
             ),
             is_preview_active=self.command_handler.preview_rule_active,
             tiling_mode=tiling_mode,
-            strong_determinism=ui_state.preferences.strong_determinism,
+            # Forced on: the second canvas buffer is what lets the streamline
+            # audio interpolate the field between physics steps. Left to the
+            # preference it would also be off for anyone with an older saved
+            # config, silently reintroducing the zipper artifact.
+            strong_determinism=True,
             brush_mode=brush_mode,
             fixed_direction_heading=fixed_heading,
             erase_mode=canvas_erase,

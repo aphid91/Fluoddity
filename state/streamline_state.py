@@ -19,7 +19,11 @@ MAX_STREAMLINES = 1024
 # dispatches per 60fps frame, and dropping one is an audible gap rather than
 # a dropped video frame, so audio raises this (see AUDIO_MAX_DISPATCHES).
 MAX_DISPATCHES_PER_FRAME = 64
-AUDIO_MAX_DISPATCHES_PER_FRAME = 16
+# One audio block may be split into several tracer dispatches so the field
+# interpolation stays inside a single physics interval (see
+# StreamlineService._field_split). A 512-sample block can split up to 16 ways,
+# and audio needs ~1.6 blocks per 60fps frame, so this has to allow ~25.
+AUDIO_MAX_DISPATCHES_PER_FRAME = 48
 
 
 @dataclass

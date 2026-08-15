@@ -332,12 +332,16 @@ class MenuBarMixin:
                     self._delayed_tooltip("Load a PNG/JPEG image as a strafe field.\nR=magnitude, G=angle (polar coordinates).")
                     imgui.end_menu()
 
-                # Strong Determinism toggle
-                _, self.state.preferences.strong_determinism = imgui.checkbox(
-                    "Strong Determinism",
-                    self.state.preferences.strong_determinism
-                )
-                self._delayed_tooltip("Enables double buffering for the canvas. When checked,\nevents will unfold exactly the same way after every\nsimulation reset. Comes with a small ~3% performance penalty.")
+                # Strong Determinism is always on now: the second canvas
+                # buffer is what the streamline audio interpolates against.
+                imgui.begin_disabled()
+                imgui.checkbox("Strong Determinism", True)
+                imgui.end_disabled()
+                self._delayed_tooltip(
+                    "Always on. Double buffers the canvas, so events unfold\n"
+                    "identically after every reset, and the streamline audio\n"
+                    "has a previous frame to interpolate the field against.\n"
+                    "Costs roughly 3% performance.")
 
                 # Advanced Drawing toggle
                 _, self.state.preferences.advanced_drawing_enabled = imgui.checkbox(

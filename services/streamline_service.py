@@ -51,6 +51,8 @@ class StreamlineService:
         self._reset_count = 0  # Resets issued (salts the population RNG)
         self._last_count = 0  # Population size at the last reset
         self._needs_reset = True  # Force a seed before the first dispatch
+        self._field_phase = 0.0  # Position between physics steps, 0..1
+        self._interp_valid = False  # Set per dispatch; see _set_trace_uniforms
 
         self._max_line_width = self._query_max_line_width()
         self._compile()
@@ -177,9 +179,51 @@ class StreamlineService:
         self._needs_reset = False
         self._last_count = count
 
+    @staticmethod
+    def _field_split(samples_per_physics_step: float, block: int) -> int:
+        """Steps per sub-dispatch so one dispatch fits in a physics interval.
+
+        The two canvas textures only describe the latest physics interval, so
+        interpolation is only meaningful while a dispatch stays inside it. A
+        512-sample audio block spans several intervals at any useful physics
+        rate (6.4 of them at 600 Hz), so the block is split into equal
+        power-of-two chunks that each fit.
+
+        Power-of-two keeps the block exactly divisible, so the audio ring
+        still receives whole blocks and nothing downstream changes.
+        """
+        if samples_per_physics_step <= 0:
+            return block
+        steps = block
+        while steps > 1 and steps > samples_per_physics_step:
+            steps //= 2
+        return max(1, steps)
+
+    def _field_alpha(self, samples_per_physics_step: float, steps: int):
+        """Blend fraction for this dispatch, and its per-step increment.
+
+        The canvas advances one physics step at a time while the tracer runs
+        many integration steps in between, so each step is placed
+        proportionally through that interval.
+
+        The ramp restarts at 0 each dispatch: the two canvas textures only
+        describe the latest physics interval, so there is nothing older to
+        ramp from. Where a dispatch outlasts that interval the shader clamps
+        and holds - see the note in sample_field_lerp.
+        """
+        # Interpolation is only meaningful when the whole dispatch lands
+        # inside the single physics interval the two canvas textures describe.
+        self._interp_valid = samples_per_physics_step >= steps
+        if samples_per_physics_step <= 1.0:
+            # The canvas moves at least as fast as the tracer; nothing to
+            # interpolate.
+            return 1.0, 0.0
+        return 0.0, 1.0 / samples_per_physics_step
+
     def update(self, canvas_texture: moderngl.Texture,
                seed_world: tuple[float, float], settings, dt: float,
-               audio_service=None, audio_settings=None):
+               audio_service=None, audio_settings=None,
+               prev_texture=None, samples_per_physics_step: float = 0.0):
         """Advance the tracer by however many dispatches `dt` is worth.
 
         Args:
@@ -248,7 +292,7 @@ class StreamlineService:
 
         self._bind()
         self._set_trace_uniforms(settings, seed_world, steps, count,
-                                 canvas_texture)
+                                 canvas_texture, prev_texture)
 
         tryset(self.trace_program, 'AUDIO_ENABLED', bool(audio_on))
         if audio_on:
@@ -273,13 +317,31 @@ class StreamlineService:
                 # No free GPU slot: the readback has not caught up yet.
                 break
             if audio_on:
-                tryset(self.trace_program, 'AUDIO_SLOT_BASE',
-                       audio_service.slot_base)
-            # Advances every dispatch so the hazard roll never repeats, even
-            # when the launch directions are deliberately frozen.
-            tryset(self.trace_program, 'DISPATCH_INDEX',
-                   (self._dispatch_count * steps) & 0xFFFFFFFF)
-            self.trace_program.run(groups, 1, 1)
+                # Split the block so each sub-dispatch stays inside one
+                # physics interval; together they still fill the whole block.
+                sub = self._field_split(samples_per_physics_step, steps)
+                slot_base = audio_service.slot_base
+                for off in range(0, steps, sub):
+                    tryset(self.trace_program, 'STEPS_PER_DISPATCH', sub)
+                    tryset(self.trace_program, 'AUDIO_SLOT_BASE', slot_base + off)
+                    tryset(self.trace_program, 'DISPATCH_INDEX',
+                           (self._dispatch_count * steps + off) & 0xFFFFFFFF)
+                    base, inc = self._field_alpha(samples_per_physics_step, sub)
+                    tryset(self.trace_program, 'FIELD_ALPHA_BASE', base)
+                    tryset(self.trace_program, 'FIELD_ALPHA_STEP', inc)
+                    self.trace_program.run(groups, 1, 1)
+                    self.ctx.memory_barrier()
+                # Restore for any later non-split use of this program.
+                tryset(self.trace_program, 'STEPS_PER_DISPATCH', steps)
+            else:
+                # Advances every dispatch so the hazard roll never repeats,
+                # even when the launch directions are deliberately frozen.
+                tryset(self.trace_program, 'DISPATCH_INDEX',
+                       (self._dispatch_count * steps) & 0xFFFFFFFF)
+                base, inc = self._field_alpha(samples_per_physics_step, steps)
+                tryset(self.trace_program, 'FIELD_ALPHA_BASE', base)
+                tryset(self.trace_program, 'FIELD_ALPHA_STEP', inc)
+                self.trace_program.run(groups, 1, 1)
             self._dispatch_count += 1
             issued += 1
             if audio_on:
@@ -298,16 +360,30 @@ class StreamlineService:
         return issued
 
     def _set_trace_uniforms(self, settings, seed_world, steps, count,
-                            canvas_texture):
+                            canvas_texture, prev_texture=None):
         """Push the physics uniforms shared by the realtime and offline paths.
 
-        Binds the canvas texture here rather than leaving it to the caller:
+        Binds the canvas textures here rather than leaving it to the caller:
         the bind and the sampler uniform have to travel together, and
         separating them once already cost a bug where the realtime path
         sampled whatever happened to be in unit 0.
         """
         canvas_texture.use(location=0)
         tryset(self.trace_program, 'canvas_texture', 0)
+        # Previous physics frame, for interpolating the field between steps.
+        #
+        # Only valid while a dispatch fits inside one physics interval: the
+        # two textures describe just the latest interval, so a longer dispatch
+        # would spend most of its samples clamped at the current frame with a
+        # discontinuity at the clamp. Measured, that is worse than the
+        # staircase it replaces (-30% to -73% at speedmult 2..5, vs +26%
+        # improvement at speedmult 1), so it is gated rather than always on.
+        interp = (prev_texture is not None
+                  and prev_texture is not canvas_texture
+                  and self._interp_valid)
+        (prev_texture if interp else canvas_texture).use(location=1)
+        tryset(self.trace_program, 'canvas_prev_texture', 1)
+        tryset(self.trace_program, 'FIELD_INTERPOLATE', bool(interp))
         tryset(self.trace_program, 'seed_pos', tuple(seed_world))
         tryset(self.trace_program, 'STEPS_PER_DISPATCH', steps)
         tryset(self.trace_program, 'RING_CAPACITY', MAX_STEPS)
@@ -325,7 +401,9 @@ class StreamlineService:
         tryset(self.trace_program, 'RUN_SALT', self._run_salt(settings))
 
     def render_audio_blocks(self, canvas_texture, seed_world, settings,
-                            audio_service, audio_settings, blocks: int):
+                            audio_service, audio_settings, blocks: int,
+                            prev_texture=None,
+                            samples_per_physics_step: float = 0.0):
         """Advance the tracer purely to produce `blocks` audio blocks.
 
         Used while recording, where there is no realtime deadline: the caller
@@ -350,7 +428,7 @@ class StreamlineService:
         self._bind()
         audio_service.bind()
         self._set_trace_uniforms(settings, seed_world, AUDIO_BLOCK, count,
-                                 canvas_texture)
+                                 canvas_texture, prev_texture)
         tryset(self.trace_program, 'AUDIO_ENABLED', True)
         tryset(self.trace_program, 'AUDIO_VOICE_COUNT', voice_count)
         tryset(self.trace_program, 'AUDIO_LANE_STRIDE', audio_service.lane_stride)
@@ -361,15 +439,24 @@ class StreamlineService:
         tryset(self.trace_program, 'AUDIO_RAMP_DEC',
                audio_service.ramp_decrement(audio_settings))
 
+        sub = self._field_split(samples_per_physics_step, AUDIO_BLOCK)
         out = []
         for i in range(blocks):
             slot = i % AUDIO_SLOTS
-            tryset(self.trace_program, 'AUDIO_SLOT_BASE', slot * AUDIO_BLOCK)
-            tryset(self.trace_program, 'DISPATCH_INDEX',
-                   (self._dispatch_count * AUDIO_BLOCK) & 0xFFFFFFFF)
-            self.trace_program.run(groups, 1, 1)
+            # Same split as the realtime path, so a recorded render and the
+            # preview interpolate identically.
+            for off in range(0, AUDIO_BLOCK, sub):
+                tryset(self.trace_program, 'STEPS_PER_DISPATCH', sub)
+                tryset(self.trace_program, 'AUDIO_SLOT_BASE',
+                       slot * AUDIO_BLOCK + off)
+                tryset(self.trace_program, 'DISPATCH_INDEX',
+                       (self._dispatch_count * AUDIO_BLOCK + off) & 0xFFFFFFFF)
+                base, inc = self._field_alpha(samples_per_physics_step, sub)
+                tryset(self.trace_program, 'FIELD_ALPHA_BASE', base)
+                tryset(self.trace_program, 'FIELD_ALPHA_STEP', inc)
+                self.trace_program.run(groups, 1, 1)
+                self.ctx.memory_barrier()
             self._dispatch_count += 1
-            self.ctx.memory_barrier()
             audio_service.reduce(audio_settings, voice_count)
             self.ctx.memory_barrier()
             # Blocking read: offline has no deadline, so this is simpler and
