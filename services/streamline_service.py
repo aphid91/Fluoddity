@@ -232,9 +232,15 @@ class StreamlineService:
         tryset(self.trace_program, 'INITIAL_SPEED', float(settings.initial_speed))
         tryset(self.trace_program, 'STOP_AT_EDGE', bool(settings.stop_at_edge))
         tryset(self.trace_program, 'RESPAWN_AT_SEED', bool(settings.respawn_at_seed))
+        tryset(self.trace_program, 'HAZARD_RATE',
+               min(max(float(settings.hazard_rate), 0.0), 1.0))
 
         for _ in range(n):
             tryset(self.trace_program, 'RANDOM_SEED', self._random_seed(settings))
+            # Advances every dispatch so the hazard roll never repeats, even
+            # when the launch directions are deliberately frozen.
+            tryset(self.trace_program, 'DISPATCH_INDEX',
+                   (self._dispatch_count * steps) & 0xFFFFFFFF)
             self.trace_program.run(groups, 1, 1)
             self._dispatch_count += 1
             # Each dispatch reads the state the previous one wrote. This is
@@ -263,6 +269,13 @@ class StreamlineService:
         tryset(self.draw_program, 'window_size', window_size)
         tryset(self.draw_program, 'RING_CAPACITY', MAX_STEPS)
         tryset(self.draw_program, 'TAIL_LENGTH', tail)
+        # A gap larger than this is a teleport (boundary wrap or hazard
+        # respawn) rather than motion, and the strip is broken there. Scaled
+        # off the integrator's own step so a large Step Size does not start
+        # shredding legitimate segments; floored so a tiny step still leaves
+        # room for the fastest particles.
+        tryset(self.draw_program, 'JUMP_THRESHOLD',
+               max(0.15, float(settings.step_size) * 25.0))
         tryset(self.draw_program, 'line_color', tuple(settings.color))
         tryset(self.draw_program, 'line_opacity', float(settings.opacity))
 

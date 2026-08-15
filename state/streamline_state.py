@@ -47,6 +47,9 @@ class StreamlineState:
     resample_each_frame: bool = True  # Redraw launch directions on each reset
     stop_at_edge: bool = True  # Retire particles that leave the canvas
     respawn_at_seed: bool = False  # Retired particles restart at the seed
+    # Independent per-step probability that a particle respawns at the seed.
+    # Per step (not per dispatch) so the rate is unaffected by the schedule.
+    hazard_rate: float = 0.0
 
     # --- Seed pinning (middle-click toggles) ---
     seed_pinned: bool = False

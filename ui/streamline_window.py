@@ -137,6 +137,24 @@ class StreamlineWindowMixin:
                 "and respawn. Uncheck for a repeatable fan."
             )
 
+            _, s.hazard_rate = imgui.slider_float(
+                "Hazard Rate", s.hazard_rate, 0.0, 0.1, format="%.5f",
+                flags=imgui.SliderFlags_.logarithmic
+            )
+            self._delayed_tooltip(
+                "Chance per integration step that a particle respawns\n"
+                "at the seed, giving the population a constant turnover.\n"
+                "Per step, not per frame, so the rate is unaffected by\n"
+                "Dispatch Rate and Steps / Dispatch."
+            )
+            if s.hazard_rate > 0.0:
+                # Mean lifetime of a geometric distribution is 1/p.
+                steps_per_sec = max(1.0, s.dispatch_hz * s.steps_per_dispatch)
+                imgui.text_disabled(
+                    f"  mean life {1.0 / s.hazard_rate:,.0f} steps"
+                    f" ({1.0 / s.hazard_rate / steps_per_sec:.2f} s)"
+                )
+
             _, s.stop_at_edge = imgui.checkbox("Stop At Edge", s.stop_at_edge)
             self._delayed_tooltip(
                 "Retire particles that leave the canvas.\n"

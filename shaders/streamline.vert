@@ -29,7 +29,8 @@ uniform float cam_zoom;
 uniform vec2 canvas_resolution;
 uniform vec2 window_size;
 uniform int RING_CAPACITY;
-uniform int TAIL_LENGTH;   // Vertices drawn per instance
+uniform int TAIL_LENGTH;      // Vertices drawn per instance
+uniform float JUMP_THRESHOLD; // Gap that counts as a teleport, not motion
 
 out float v_t;
 flat out int v_dead;
@@ -80,12 +81,14 @@ void main() {
 
     vec2 world_pos = path[base + slot];
 
-    // A boundary wrap teleports the particle across the canvas. Drop the
+    // A boundary wrap or a hazard respawn teleports the particle. Drop the
     // vertex that follows such a jump so the strip breaks instead of drawing
-    // a line straight across. Any real step is far smaller than this.
+    // a line straight across the canvas. JUMP_THRESHOLD is derived from the
+    // integrator's real step scale, so genuine motion never trips it.
     int prev_slot = slot - 1;
     prev_slot -= RING_CAPACITY * int(floor(float(prev_slot) / float(RING_CAPACITY)));
-    if (age < tail - 1 && distance(world_pos, path[base + prev_slot]) > 1.0) {
+    if (age < tail - 1 &&
+        distance(world_pos, path[base + prev_slot]) > JUMP_THRESHOLD) {
         v_dead = 1;
     }
 

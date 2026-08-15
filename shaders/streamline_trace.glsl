@@ -48,6 +48,8 @@ uniform float INITIAL_SPEED;
 uniform float RANDOM_SEED;
 uniform bool RESPAWN_AT_SEED;       // Retired particles restart at the seed
 uniform bool STOP_AT_EDGE;          // Retire on leaving the canvas
+uniform float HAZARD_RATE;          // Per-step chance a particle resets to seed
+uniform uint DISPATCH_INDEX;        // Decorrelates the hazard roll per dispatch
 
 vec2 sample_field(vec2 world_pos) {
     return texture(canvas_texture, world_pos * 0.5 + 0.5).xy;
@@ -63,6 +65,22 @@ float hash11(float p) {
     p *= p + 33.33;
     p *= p + p;
     return fract(p);
+}
+
+// Integer bit-mix (PCG-style). Used for the per-step hazard roll: hash11 on
+// nearly-equal float inputs aliases badly, which would make whole batches of
+// particles respawn on the same step instead of independently.
+uint hash_u32(uint x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+float rand01(uint a, uint b) {
+    return float(hash_u32(a * 0x9e3779b9u ^ hash_u32(b))) * (1.0 / 4294967296.0);
 }
 
 vec2 launch_velocity(int line_id) {
@@ -101,6 +119,20 @@ void main() {
     }
 
     for (int k = 0; k < STEPS_PER_DISPATCH; ++k) {
+        // Hazard: an independent per-step chance of respawning at the seed.
+        // Defined per step rather than per dispatch so the rate means the
+        // same thing whatever STEPS_PER_DISPATCH and the dispatch rate are.
+        if (HAZARD_RATE > 0.0) {
+            uint roll_id = DISPATCH_INDEX + uint(k);
+            if (rand01(uint(line_id), roll_id) < HAZARD_RATE) {
+                pos = seed_pos;
+                vel = launch_velocity(line_id);
+                // No extra ring write here: the position jump back to the
+                // seed is what the draw pass keys on to break the strip, and
+                // writing the seed twice would just burn a ring slot.
+            }
+        }
+
         vec2 force = sample_field(pos);
         vel += force * FORCE_SCALE;
 
