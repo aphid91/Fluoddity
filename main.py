@@ -9,7 +9,8 @@ from services import RuleManager, EntityPicker, VideoRecorderService, ConfigSave
 from services.field_handler import FieldHandler
 from services.parameter_lock_service import ParameterLockService
 from utilities.paths import initialize_user_data, get_user_physics_configs_dir, get_app_physics_configs_dir, get_screenshots_dir
-from state import load_preferences, save_preferences, SimState
+from state import (load_preferences, save_preferences, SimState,
+                   load_streamline_state, load_audio_state)
 from state.audio_state import AUDIO_BLOCK
 from command_handler import CommandHandler
 from simulation_runner import SimulationRunner
@@ -59,6 +60,8 @@ class App:
         # Apply loaded preferences to UI
         self.ui.state.preferences = loaded_prefs
         self.ui._last_applied_world_size = loaded_prefs.world_size
+        self.ui.state.streamline = load_streamline_state()
+        self.ui.state.audio = load_audio_state()
 
         # Create services (Orchestrator owns these)
         self.rule_manager = RuleManager()
@@ -70,6 +73,8 @@ class App:
         self.streamline_service = StreamlineService(self.ctx)
         self.audio_service = AudioService(self.ctx)
         self._streamline_last_time = time.time()  # Tracer's own clock
+        # User's own dispatch schedule, held while audio locks the clock.
+        self._streamline_sched_backup = None
         self.multi_load_service = MultiLoadService()
         self.advanced_drawing_processor = AdvancedDrawingProcessor(self.ctx)
         self.ui.multi_load_service = self.multi_load_service
@@ -361,9 +366,18 @@ class App:
 
             if audio.enabled and self.audio_service.active:
                 # Locked to the audio contract: one block of samples per
-                # dispatch, at the device's rate.
+                # dispatch, at the device's rate. Stash the user's own values
+                # first and restore them on release, so the locked numbers are
+                # never what gets persisted or left behind.
+                if self._streamline_sched_backup is None:
+                    self._streamline_sched_backup = (
+                        streamline.steps_per_dispatch, streamline.dispatch_hz)
                 streamline.steps_per_dispatch = AUDIO_BLOCK
                 streamline.dispatch_hz = audio.sample_rate / AUDIO_BLOCK
+            elif self._streamline_sched_backup is not None:
+                (streamline.steps_per_dispatch,
+                 streamline.dispatch_hz) = self._streamline_sched_backup
+                self._streamline_sched_backup = None
 
             self.streamline_service.update(
                 canvas_texture=self.sim.can,
@@ -462,7 +476,14 @@ class App:
     def cleanup(self):
         # Save preferences before cleanup
         ui_state = self.ui.get_state()
-        save_preferences(ui_state.preferences)
+        # If we exit while audio holds the clock, persist the user's own
+        # schedule rather than the locked audio values.
+        if self._streamline_sched_backup is not None:
+            (ui_state.streamline.steps_per_dispatch,
+             ui_state.streamline.dispatch_hz) = self._streamline_sched_backup
+        save_preferences(ui_state.preferences,
+                         streamline=ui_state.streamline,
+                         audio=ui_state.audio)
 
         self.advanced_drawing_processor.cleanup()
         self.audio_service.cleanup()

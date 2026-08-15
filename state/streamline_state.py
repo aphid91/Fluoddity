@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from .audio_state import TRANSIENT
 
 # Ring capacity per particle, in positions. The service allocates its buffers
 # once at this size and clamps the tail slider to it, so nothing reallocates at
@@ -73,4 +75,4 @@ class StreamlineState:
     line_width: float = 1.0
 
     # --- One-shot flags (consumed by the service each frame) ---
-    request_reset: bool = False  # Re-seed every particle at the seed position
+    request_reset: bool = field(default=False, metadata=TRANSIENT)

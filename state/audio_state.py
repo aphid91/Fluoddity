@@ -1,4 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+# Marks a field as runtime-only, so it is skipped when preferences are saved.
+TRANSIENT = {"transient": True}
 
 # Audio block size, in frames. One tracer dispatch produces exactly this many
 # samples, so STEPS_PER_DISPATCH is locked to it while audio is enabled.
@@ -45,7 +48,8 @@ class AudioState:
     # hundreds. Auto-gain tracks the running peak and divides it out, keeping
     # Amplitude a usable 0..4 control instead of needing ~0.003.
     auto_gain: bool = True
-    auto_gain_db: float = 0.0  # Telemetry: gain the tracker is applying
+    # Telemetry: gain the tracker is currently applying.
+    auto_gain_db: float = field(default=0.0, metadata=TRANSIENT)
     highpass_hz: float = 20.0  # One-pole DC blocker cutoff
     limiter_ceiling: float = 0.9  # Peak ceiling before hard clip
 
@@ -55,9 +59,10 @@ class AudioState:
     reset_ramp_ms: float = 3.0
 
     # --- Read-only telemetry, updated by the service each frame ---
-    starves: int = 0  # Times the CPU ring ran dry
-    in_flight: int = 0  # GPU blocks dispatched but not yet read back
-    ring_fill: float = 0.0  # CPU ring occupancy, 0..1
-    peak: float = 0.0  # Peak sample of the most recent block
-    device_name: str = ""
-    last_error: str = ""
+    # All transient: these describe the running stream, not user intent.
+    starves: int = field(default=0, metadata=TRANSIENT)
+    in_flight: int = field(default=0, metadata=TRANSIENT)
+    ring_fill: float = field(default=0.0, metadata=TRANSIENT)
+    peak: float = field(default=0.0, metadata=TRANSIENT)
+    device_name: str = field(default="", metadata=TRANSIENT)
+    last_error: str = field(default="", metadata=TRANSIENT)

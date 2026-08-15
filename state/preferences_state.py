@@ -78,14 +78,87 @@ class PreferencesState:
     parameter_locks_enabled: bool = False  # Master toggle for parameter lock feature
 
 
-def save_preferences(prefs: PreferencesState, filepath: Path | str = None) -> None:
-    """Save preferences to a JSON file."""
+def _dump_section(obj) -> dict:
+    """Serialise a state dataclass, skipping fields marked transient.
+
+    Transient fields are runtime readouts and one-shot flags - stream
+    telemetry, pending requests - which describe the current session rather
+    than user intent, and would be misleading or actively wrong if restored.
+    """
+    out = {}
+    for name, f in obj.__dataclass_fields__.items():
+        if f.metadata.get("transient"):
+            continue
+        out[name] = getattr(obj, name)
+    return out
+
+
+def _load_section(cls, data: dict, key: str):
+    """Rebuild a state dataclass from a nested section of the prefs file."""
+    section = data.get(key)
+    if not isinstance(section, dict):
+        return cls()
+    valid = set(cls.__dataclass_fields__.keys())
+    kwargs = {}
+    for k, v in section.items():
+        if k not in valid:
+            continue  # Field removed since this file was written.
+        if cls.__dataclass_fields__[k].metadata.get("transient"):
+            continue  # Never restore runtime state, even if an old file has it.
+        kwargs[k] = v
+    try:
+        obj = cls(**kwargs)
+    except TypeError as e:
+        print(f"Warning: failed to load '{key}' preferences: {e}")
+        return cls()
+    # JSON has no tuple type, so tuple-typed fields come back as lists.
+    for k, f in cls.__dataclass_fields__.items():
+        if isinstance(getattr(obj, k), list) and f.type in ("tuple", tuple):
+            setattr(obj, k, tuple(getattr(obj, k)))
+    return obj
+
+
+def save_preferences(prefs: PreferencesState, filepath: Path | str = None,
+                     streamline=None, audio=None) -> None:
+    """Save preferences to a JSON file.
+
+    Streamline and audio settings are nested under their own keys rather than
+    flattened, so their field names cannot collide with preferences.
+    """
     if filepath is None:
         filepath = get_user_preferences_path()
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     data = asdict(prefs)
+    if streamline is not None:
+        data["streamline"] = _dump_section(streamline)
+    if audio is not None:
+        data["audio"] = _dump_section(audio)
     filepath.write_text(json.dumps(data, indent=2))
+
+
+def load_streamline_state(filepath: Path | str = None):
+    """Load the nested streamline section, or defaults if absent."""
+    from .streamline_state import StreamlineState
+    return _load_section(StreamlineState, _read_prefs_file(filepath), "streamline")
+
+
+def load_audio_state(filepath: Path | str = None):
+    """Load the nested audio section, or defaults if absent."""
+    from .audio_state import AudioState
+    return _load_section(AudioState, _read_prefs_file(filepath), "audio")
+
+
+def _read_prefs_file(filepath: Path | str = None) -> dict:
+    if filepath is None:
+        filepath = get_user_preferences_path()
+    filepath = Path(filepath)
+    if not filepath.exists():
+        return {}
+    try:
+        return json.loads(filepath.read_text())
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 def load_preferences(filepath: Path | str = None) -> PreferencesState:
