@@ -50,6 +50,8 @@ uniform bool RESPAWN_AT_SEED;       // Retired particles restart at the seed
 uniform bool STOP_AT_EDGE;          // Retire on leaving the canvas
 uniform float HAZARD_RATE;          // Per-step chance a particle resets to seed
 uniform uint DISPATCH_INDEX;        // Decorrelates the hazard roll per dispatch
+uniform float SEED_SCATTER;         // Radius of each particle's own spring target
+uniform uint RUN_SALT;              // Reseeds the whole population per reset
 
 vec2 sample_field(vec2 world_pos) {
     return texture(canvas_texture, world_pos * 0.5 + 0.5).xy;
@@ -83,16 +85,33 @@ float rand01(uint a, uint b) {
     return float(hash_u32(a * 0x9e3779b9u ^ hash_u32(b))) * (1.0 / 4294967296.0);
 }
 
-vec2 launch_velocity(int line_id) {
+// Launch velocity from an explicit 32-bit stream id, so every respawn draws
+// fresh randomness. Deriving it from line_id alone (as before) handed a
+// respawning particle the same velocity every time, and it would retrace an
+// identical path.
+vec2 launch_velocity(int line_id, uint stream) {
     if (INITIAL_SPEED <= 0.0) {
         return vec2(0.0);
     }
-    // Spread the ids far apart before hashing: hash11 of nearly-equal inputs
-    // collapses, which would launch every particle identically.
-    float h = float(line_id) * 71.13 + RANDOM_SEED * 131.7;
-    float angle = hash11(h) * 6.28318530718;
-    float speed = mix(0.25, 1.0, hash11(h + 7.77)) * INITIAL_SPEED;
+    float angle = rand01(uint(line_id) * 2u + 0u, stream) * 6.28318530718;
+    float speed = mix(0.25, 1.0, rand01(uint(line_id) * 2u + 1u, stream))
+                * INITIAL_SPEED;
     return vec2(cos(angle), sin(angle)) * speed;
+}
+
+// A stable per-particle offset from the seed. The spring is a point
+// attractor: without this every particle converges on exactly the same fixed
+// point and the population collapses to a single dot. Giving each its own
+// target turns that collapse into a cloud around the seed.
+vec2 seed_offset(int line_id) {
+    if (SEED_SCATTER <= 0.0) {
+        return vec2(0.0);
+    }
+    float angle = rand01(uint(line_id) * 2u + 0u, 0x5eed0001u) * 6.28318530718;
+    // sqrt keeps the samples uniform over the disc instead of bunching at
+    // the centre.
+    float r = sqrt(rand01(uint(line_id) * 2u + 1u, 0x5eed0001u)) * SEED_SCATTER;
+    return vec2(cos(angle), sin(angle)) * r;
 }
 
 void main() {
@@ -113,8 +132,8 @@ void main() {
         if (!RESPAWN_AT_SEED) {
             return;
         }
-        pos = seed_pos;
-        vel = launch_velocity(line_id);
+        pos = seed_pos + seed_offset(line_id);
+        vel = launch_velocity(line_id, RUN_SALT ^ (DISPATCH_INDEX * 0x9e3779b9u));
         alive = 1u;
     }
 
@@ -123,10 +142,12 @@ void main() {
         // Defined per step rather than per dispatch so the rate means the
         // same thing whatever STEPS_PER_DISPATCH and the dispatch rate are.
         if (HAZARD_RATE > 0.0) {
-            uint roll_id = DISPATCH_INDEX + uint(k);
+            uint roll_id = RUN_SALT ^ (DISPATCH_INDEX + uint(k));
             if (rand01(uint(line_id), roll_id) < HAZARD_RATE) {
-                pos = seed_pos;
-                vel = launch_velocity(line_id);
+                pos = seed_pos + seed_offset(line_id);
+                // Fresh stream per respawn, so a particle that respawns
+                // repeatedly does not retrace the same path each time.
+                vel = launch_velocity(line_id, roll_id * 0x85ebca6bu + 1u);
                 // No extra ring write here: the position jump back to the
                 // seed is what the draw pass keys on to break the strip, and
                 // writing the seed twice would just burn a ring slot.
@@ -150,7 +171,11 @@ void main() {
             // slingshots to the canvas corners; measured stable up to ~0.20,
             // so cap at 0.15 for margin and let the slider saturate there.
             float ks = min(STEP_SIZE * STEP_SIZE * RESTORE_FORCE, 0.15);
-            vel += (seed_pos - pos) * (ks / max(STEP_SIZE, 1e-6));
+            // Each particle pulls toward its own offset target, so a stiff
+            // spring gathers the population into a cloud rather than
+            // collapsing every particle onto one identical fixed point.
+            vec2 target = seed_pos + seed_offset(line_id);
+            vel += (target - pos) * (ks / max(STEP_SIZE, 1e-6));
             // Critical damping for this discrete step.
             vel *= max(0.0, 1.0 - min(2.0 * sqrt(ks), 1.0));
         }

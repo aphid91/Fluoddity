@@ -27,13 +27,22 @@ uniform vec2 seed_pos;
 uniform int RING_CAPACITY;
 uniform int STREAMLINE_COUNT;
 uniform float INITIAL_SPEED;
-uniform float RANDOM_SEED;
+uniform float SEED_SCATTER;
+uniform uint RUN_SALT;
 
-float hash11(float p) {
-    p = fract(p * 0.1031);
-    p *= p + 33.33;
-    p *= p + p;
-    return fract(p);
+// Same integer bit-mix as the tracer, so a reset and a respawn draw from the
+// same well-distributed stream.
+uint hash_u32(uint x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+float rand01(uint a, uint b) {
+    return float(hash_u32(a * 0x9e3779b9u ^ hash_u32(b))) * (1.0 / 4294967296.0);
 }
 
 void main() {
@@ -44,22 +53,29 @@ void main() {
 
     vec2 vel = vec2(0.0);
     if (INITIAL_SPEED > 0.0) {
-        // Spread the ids far apart before hashing: hash11 of nearly-equal
-        // inputs collapses, which would launch every particle identically.
-        float h = float(line_id) * 71.13 + RANDOM_SEED * 131.7;
-        float angle = hash11(h) * 6.28318530718;
-        float speed = mix(0.25, 1.0, hash11(h + 7.77)) * INITIAL_SPEED;
+        float angle = rand01(uint(line_id) * 2u + 0u, RUN_SALT) * 6.28318530718;
+        float speed = mix(0.25, 1.0, rand01(uint(line_id) * 2u + 1u, RUN_SALT))
+                    * INITIAL_SPEED;
         vel = vec2(cos(angle), sin(angle)) * speed;
     }
 
-    particles[line_id].pos = seed_pos;
+    // Match the tracer's seed_offset exactly, so a particle starts at the
+    // same target the spring will pull it toward.
+    vec2 start = seed_pos;
+    if (SEED_SCATTER > 0.0) {
+        float a = rand01(uint(line_id) * 2u + 0u, 0x5eed0001u) * 6.28318530718;
+        float r = sqrt(rand01(uint(line_id) * 2u + 1u, 0x5eed0001u)) * SEED_SCATTER;
+        start += vec2(cos(a), sin(a)) * r;
+    }
+
+    particles[line_id].pos = start;
     particles[line_id].vel = vel;
     particles[line_id].write_index = 0u;
     particles[line_id].alive = 1u;
 
-    // Collapse the ring onto the seed so no stale geometry survives the reset.
+    // Collapse the ring onto the start point so no stale geometry survives.
     int base = line_id * RING_CAPACITY;
     for (int i = 0; i < RING_CAPACITY; ++i) {
-        path[base + i] = seed_pos;
+        path[base + i] = start;
     }
 }

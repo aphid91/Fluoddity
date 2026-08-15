@@ -129,6 +129,18 @@ class StreamlineWindowMixin:
                 "given to each particle when it is seeded."
             )
 
+            _, s.seed_scatter = imgui.slider_float(
+                "Seed Scatter", s.seed_scatter, 0.0, 1.0, format="%.3f"
+            )
+            self._delayed_tooltip(
+                "Radius of each particle's own spring target around the seed.\n"
+                "The spring is a point attractor, so at 0 a strong Restore\n"
+                "Force pulls the whole population onto one identical point.\n"
+                "Raise this to gather them into a cloud instead."
+            )
+            if s.restore_force > 0.0 and s.seed_scatter <= 0.0:
+                imgui.text_disabled("  population will collapse to one point")
+
             _, s.resample_each_frame = imgui.checkbox(
                 "Resample Launch Directions", s.resample_each_frame
             )

@@ -46,6 +46,7 @@ class StreamlineService:
         # Scheduling
         self._accumulator = 0.0  # Unspent time, in seconds
         self._dispatch_count = 0  # Total dispatches issued (drives reseeding)
+        self._reset_count = 0  # Resets issued (salts the population RNG)
         self._last_count = 0  # Population size at the last reset
         self._needs_reset = True  # Force a seed before the first dispatch
 
@@ -149,19 +150,26 @@ class StreamlineService:
         self.path_buffer.bind_to_storage_buffer(PATH_BINDING)
         self.state_buffer.bind_to_storage_buffer(STATE_BINDING)
 
-    def _random_seed(self, settings) -> float:
+    def _run_salt(self, settings) -> int:
+        """Population-wide RNG salt.
+
+        Advances on every reset so a fresh population gets fresh launch
+        directions; held fixed when the user wants a repeatable fan.
+        """
         if not settings.resample_each_frame:
-            return 0.0
-        return float(self._dispatch_count) * 0.618
+            return 0
+        return self._reset_count * 0x9E3779B9 & 0xFFFFFFFF
 
     def _reset(self, seed_world, settings, count):
-        """Place every particle at the seed and clear its ring."""
+        """Place every particle at its start point and clear its ring."""
+        self._reset_count += 1
         self._bind()
         tryset(self.reset_program, 'seed_pos', tuple(seed_world))
         tryset(self.reset_program, 'RING_CAPACITY', MAX_STEPS)
         tryset(self.reset_program, 'STREAMLINE_COUNT', count)
         tryset(self.reset_program, 'INITIAL_SPEED', float(settings.initial_speed))
-        tryset(self.reset_program, 'RANDOM_SEED', self._random_seed(settings))
+        tryset(self.reset_program, 'SEED_SCATTER', float(settings.seed_scatter))
+        tryset(self.reset_program, 'RUN_SALT', self._run_salt(settings))
         self.reset_program.run((count + LOCAL_SIZE - 1) // LOCAL_SIZE, 1, 1)
         self.ctx.memory_barrier()
         self._needs_reset = False
@@ -234,9 +242,10 @@ class StreamlineService:
         tryset(self.trace_program, 'RESPAWN_AT_SEED', bool(settings.respawn_at_seed))
         tryset(self.trace_program, 'HAZARD_RATE',
                min(max(float(settings.hazard_rate), 0.0), 1.0))
+        tryset(self.trace_program, 'SEED_SCATTER', float(settings.seed_scatter))
+        tryset(self.trace_program, 'RUN_SALT', self._run_salt(settings))
 
         for _ in range(n):
-            tryset(self.trace_program, 'RANDOM_SEED', self._random_seed(settings))
             # Advances every dispatch so the hazard roll never repeats, even
             # when the launch directions are deliberately frozen.
             tryset(self.trace_program, 'DISPATCH_INDEX',

@@ -44,6 +44,10 @@ class StreamlineState:
     # --- Population ---
     count: int = 1  # Number of particles
     initial_speed: float = 0.5  # Max magnitude of the random launch velocity
+    # Radius of each particle's own spring target around the seed. The spring
+    # is a point attractor, so without scatter a stiff Restore Force collapses
+    # the whole population onto one identical point.
+    seed_scatter: float = 0.12
     resample_each_frame: bool = True  # Redraw launch directions on each reset
     stop_at_edge: bool = True  # Retire particles that leave the canvas
     respawn_at_seed: bool = False  # Retired particles restart at the seed
