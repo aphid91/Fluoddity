@@ -11,6 +11,11 @@ class VideoRecorderService:
         """Check if recording is active."""
         return self.recorder.active
 
+    @property
+    def last_output_path(self):
+        """Path of the most recently finished video, for audio muxing."""
+        return self.recorder.last_output_path
+
     def start(self) -> None:
         """Start recording."""
         if not self.recorder.active:

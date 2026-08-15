@@ -8,6 +8,7 @@ class VidSaver:
         self.active = False
         self.current_frame = 0
         self.recorder = None
+        self.last_output_path = None
         self.ssk_w = 2
 
     def frame(self, ctx, tex, max_frames=-1, ssk_w=2, filename_prefix=""):
@@ -67,6 +68,9 @@ class VidSaver:
         '''Save video and reset everything for another recording'''
 
         if self.recorder is not None:
+            # Remember where it landed so an audio track can be muxed in
+            # after the fact; the recorder itself is dropped below.
+            self.last_output_path = self.recorder.output_path
             self.recorder.close()
             self.recorder = None
 

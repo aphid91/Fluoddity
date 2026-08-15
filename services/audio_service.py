@@ -316,44 +316,10 @@ class AudioService:
             self.fences[slot] = None
             self.r += 1
 
-            block = self.staging
-            np.nan_to_num(block, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+            # Same conditioning the offline render uses, so a recorded
+            # file matches what the preview sounded like.
+            block = self.condition_block(settings, self.staging)
 
-            if settings.auto_gain:
-                # Normalise by a tracked peak. The raw signal's scale depends
-                # entirely on how much energy the canvas holds - it spans
-                # several orders of magnitude between an empty canvas and a
-                # dense one - so this is what keeps Amplitude meaningful.
-                blk_peak = float(np.max(np.abs(block)))
-                if blk_peak > self._envelope:
-                    self._envelope = blk_peak            # attack: instant
-                else:
-                    # Release in the log domain. The raw level tracks canvas
-                    # energy and spans decades, so a linear release crawls
-                    # down from a transient and leaves everything after it
-                    # inaudible. Measured range is ~27 dB within a run and
-                    # far wider between an empty and a dense canvas.
-                    ratio = max(blk_peak, 1e-9) / self._envelope
-                    self._envelope *= ratio ** 0.25
-                # Floor the envelope well below any usable signal, so silence
-                # is not amplified into noise.
-                self._envelope = max(self._envelope, 1e-6)
-                gain = float(settings.amplitude) / self._envelope
-                # Cap the boost so a near-silent canvas cannot scream when it
-                # suddenly gains energy.
-                gain = min(gain, 1e4)
-                block *= gain
-                settings.auto_gain_db = 20.0 * math.log10(max(gain, 1e-9))
-            else:
-                self._envelope = 1.0
-                settings.auto_gain_db = 0.0
-
-            self.limiter.ceiling = float(settings.limiter_ceiling)
-            self.limiter.process(block)
-            # Report the peak of what actually leaves the pipeline, not the
-            # limiter's input: the input peak is pre-gain and so looks
-            # identical however the Amplitude slider is set.
-            self.peak = float(np.max(np.abs(block)))
             # Mono voice -> both channels.
             self.stereo[:, 0] = block
             self.stereo[:, 1] = block
@@ -384,6 +350,55 @@ class AudioService:
                 self._action = self.mixer.play_ringbuffer(self.rb)
             except Exception as e:
                 self.last_error = f"playback restart failed: {e}"
+
+    def condition_block(self, settings, block: np.ndarray) -> np.ndarray:
+        """Apply the same auto-gain and limiting the realtime path uses.
+
+        Shared so an offline render sounds like the preview did, rather than
+        re-implementing the conditioning and drifting away from it.
+        """
+        np.nan_to_num(block, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if settings.auto_gain:
+            blk_peak = float(np.max(np.abs(block)))
+            if blk_peak > self._envelope:
+                self._envelope = blk_peak
+            else:
+                ratio = max(blk_peak, 1e-9) / self._envelope
+                self._envelope *= ratio ** 0.25
+            self._envelope = max(self._envelope, 1e-6)
+            gain = min(float(settings.amplitude) / self._envelope, 1e4)
+            block *= gain
+            settings.auto_gain_db = 20.0 * math.log10(max(gain, 1e-9))
+        else:
+            self._envelope = 1.0
+            settings.auto_gain_db = 0.0
+
+        if self.limiter is None:
+            self.limiter = Limiter(int(settings.sample_rate),
+                                   ceiling=settings.limiter_ceiling)
+        self.limiter.ceiling = float(settings.limiter_ceiling)
+        self.limiter.process(block)
+        self.peak = float(np.max(np.abs(block)))
+        return block
+
+    def read_slot(self, slot: int) -> np.ndarray:
+        """Read one mix block straight out of the GPU (offline path).
+
+        Blocking, unlike the realtime readback: an offline render has no
+        deadline, so waiting for the GPU is cheaper than managing fences.
+        """
+        out = np.zeros(AUDIO_BLOCK, dtype="f4")
+        self.mix_buffer.read_into(out, size=AUDIO_BLOCK * 4,
+                                  offset=slot * AUDIO_BLOCK * 4)
+        return out
+
+    def reset_offline(self, settings):
+        """Reset conditioning state before an offline render."""
+        self._ensure_gpu()
+        self._envelope = 1.0
+        self.limiter = Limiter(int(settings.sample_rate),
+                               ceiling=settings.limiter_ceiling)
 
     def update_telemetry(self, settings):
         settings.starves = self.starves

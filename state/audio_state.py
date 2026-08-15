@@ -33,6 +33,12 @@ class AudioState:
     enabled: bool = False  # Master switch; drives the tracer clock when on
     show_window: bool = False  # Whether the Audio window is visible
 
+    # Render the same voice into recorded video. Offline the audio is not
+    # delivered on a deadline, so it is generated per video frame instead of
+    # against the wall clock: one frame of video is 1/fps of output and needs
+    # exactly sample_rate/fps samples, whatever speedmult is.
+    record_audio: bool = False
+
     sample_rate: int = 48000  # Frames per second
     # Particles 0..voice_count-1 each contribute a voice to the mix. Kept
     # independent of the streamline count: sonifying a whole 1024-particle

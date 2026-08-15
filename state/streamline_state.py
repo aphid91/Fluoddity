@@ -66,6 +66,7 @@ class StreamlineState:
     pinned_seed: tuple = (0.0, 0.0)  # World space [-1, 1]
 
     # --- Display ---
+    render_to_video: bool = False  # Draw the overlay into recorded frames
     tail_length: int = 512  # Ring entries drawn per particle
     color: tuple = (1.0, 0.85, 0.2)  # Line color (RGB)
     opacity: float = 0.9  # Line alpha

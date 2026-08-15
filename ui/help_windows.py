@@ -287,6 +287,42 @@ class HelpWindowsMixin:
                 self.state.preferences.max_frames = int(new_length * 60)
             self._delayed_tooltip("After Video reaches this length, the recording will be stopped")
 
+            imgui.separator()
+
+            # Streamline / audio capture. Locked while recording: both change
+            # what the pipeline is doing mid-render.
+            if recording_active:
+                imgui.begin_disabled()
+
+            _, self.state.audio.record_audio = imgui.checkbox(
+                "Enable Audio", self.state.audio.record_audio
+            )
+            self._delayed_tooltip(
+                "Render the streamline voice into the video's audio track.\n"
+                "Generated per frame rather than in realtime, so it stays in\n"
+                "sync however slowly the render runs. Live audio playback is\n"
+                "suspended for the duration."
+            )
+            if self.state.audio.record_audio:
+                sr = self.state.audio.sample_rate
+                imgui.text_disabled(f"  {sr} Hz, {sr / 60.0:.0f} samples/frame")
+
+            _, self.state.streamline.render_to_video = imgui.checkbox(
+                "Streamlines Render To Video", self.state.streamline.render_to_video
+            )
+            self._delayed_tooltip(
+                "Composite the streamline overlay into recorded frames.\n"
+                "Requires the Streamlines overlay to be enabled."
+            )
+            if (self.state.streamline.render_to_video
+                    and not self.state.streamline.enabled):
+                imgui.text_disabled("  (Streamlines overlay is off)")
+
+            if recording_active:
+                imgui.end_disabled()
+
+            imgui.separator()
+
             # Lock motion_blur_samples during recording
             if recording_active:
                 imgui.begin_disabled()

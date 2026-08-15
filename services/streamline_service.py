@@ -19,6 +19,7 @@ from state.streamline_state import (
     MAX_STEPS, MAX_STREAMLINES, MAX_DISPATCHES_PER_FRAME,
     AUDIO_MAX_DISPATCHES_PER_FRAME,
 )
+from state.audio_state import AUDIO_BLOCK, AUDIO_SLOTS
 
 # SSBO binding points. 0/2/3/4 are claimed by sim.py's entity and rule buffers.
 PATH_BINDING = 5
@@ -246,23 +247,7 @@ class StreamlineService:
         groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
 
         self._bind()
-        canvas_texture.use(location=0)
-        tryset(self.trace_program, 'canvas_texture', 0)
-        tryset(self.trace_program, 'seed_pos', tuple(seed_world))
-        tryset(self.trace_program, 'STEPS_PER_DISPATCH', steps)
-        tryset(self.trace_program, 'RING_CAPACITY', MAX_STEPS)
-        tryset(self.trace_program, 'STREAMLINE_COUNT', count)
-        tryset(self.trace_program, 'FORCE_SCALE', float(settings.force_scale))
-        tryset(self.trace_program, 'DAMPING', float(settings.damping))
-        tryset(self.trace_program, 'STEP_SIZE', float(settings.step_size))
-        tryset(self.trace_program, 'RESTORE_FORCE', float(settings.restore_force))
-        tryset(self.trace_program, 'INITIAL_SPEED', float(settings.initial_speed))
-        tryset(self.trace_program, 'STOP_AT_EDGE', bool(settings.stop_at_edge))
-        tryset(self.trace_program, 'RESPAWN_AT_SEED', bool(settings.respawn_at_seed))
-        tryset(self.trace_program, 'HAZARD_RATE',
-               min(max(float(settings.hazard_rate), 0.0), 1.0))
-        tryset(self.trace_program, 'SEED_SCATTER', float(settings.seed_scatter))
-        tryset(self.trace_program, 'RUN_SALT', self._run_salt(settings))
+        self._set_trace_uniforms(settings, seed_world, steps, count)
 
         tryset(self.trace_program, 'AUDIO_ENABLED', bool(audio_on))
         if audio_on:
@@ -310,6 +295,79 @@ class StreamlineService:
                 self.ctx.memory_barrier()
 
         return issued
+
+    def _set_trace_uniforms(self, settings, seed_world, steps, count):
+        """Push the physics uniforms shared by the realtime and offline paths."""
+        tryset(self.trace_program, 'canvas_texture', 0)
+        tryset(self.trace_program, 'seed_pos', tuple(seed_world))
+        tryset(self.trace_program, 'STEPS_PER_DISPATCH', steps)
+        tryset(self.trace_program, 'RING_CAPACITY', MAX_STEPS)
+        tryset(self.trace_program, 'STREAMLINE_COUNT', count)
+        tryset(self.trace_program, 'FORCE_SCALE', float(settings.force_scale))
+        tryset(self.trace_program, 'DAMPING', float(settings.damping))
+        tryset(self.trace_program, 'STEP_SIZE', float(settings.step_size))
+        tryset(self.trace_program, 'RESTORE_FORCE', float(settings.restore_force))
+        tryset(self.trace_program, 'INITIAL_SPEED', float(settings.initial_speed))
+        tryset(self.trace_program, 'STOP_AT_EDGE', bool(settings.stop_at_edge))
+        tryset(self.trace_program, 'RESPAWN_AT_SEED', bool(settings.respawn_at_seed))
+        tryset(self.trace_program, 'HAZARD_RATE',
+               min(max(float(settings.hazard_rate), 0.0), 1.0))
+        tryset(self.trace_program, 'SEED_SCATTER', float(settings.seed_scatter))
+        tryset(self.trace_program, 'RUN_SALT', self._run_salt(settings))
+
+    def render_audio_blocks(self, canvas_texture, seed_world, settings,
+                            audio_service, audio_settings, blocks: int):
+        """Advance the tracer purely to produce `blocks` audio blocks.
+
+        Used while recording, where there is no realtime deadline: the caller
+        decides how many blocks a video frame is worth and this renders
+        exactly that many, reading each back synchronously.
+
+        Returns a list of conditioned mono blocks.
+        """
+        if self.trace_program is None or blocks <= 0:
+            return []
+
+        count = int(max(1, min(settings.count, MAX_STREAMLINES)))
+        if count != self._last_count or self._needs_reset:
+            self._reset(seed_world, settings, count)
+        if settings.request_reset:
+            settings.request_reset = False
+            self._reset(seed_world, settings, count)
+
+        voice_count = int(min(max(audio_settings.voice_count, 1), count))
+        groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
+
+        self._bind()
+        audio_service.bind()
+        canvas_texture.use(location=0)
+        self._set_trace_uniforms(settings, seed_world, AUDIO_BLOCK, count)
+        tryset(self.trace_program, 'AUDIO_ENABLED', True)
+        tryset(self.trace_program, 'AUDIO_VOICE_COUNT', voice_count)
+        tryset(self.trace_program, 'AUDIO_LANE_STRIDE', audio_service.lane_stride)
+        tryset(self.trace_program, 'AUDIO_AMPLITUDE',
+               1.0 if audio_settings.auto_gain else float(audio_settings.amplitude))
+        tryset(self.trace_program, 'AUDIO_HP_COEFF',
+               audio_service.highpass_coeff(audio_settings))
+        tryset(self.trace_program, 'AUDIO_RAMP_DEC',
+               audio_service.ramp_decrement(audio_settings))
+
+        out = []
+        for i in range(blocks):
+            slot = i % AUDIO_SLOTS
+            tryset(self.trace_program, 'AUDIO_SLOT_BASE', slot * AUDIO_BLOCK)
+            tryset(self.trace_program, 'DISPATCH_INDEX',
+                   (self._dispatch_count * AUDIO_BLOCK) & 0xFFFFFFFF)
+            self.trace_program.run(groups, 1, 1)
+            self._dispatch_count += 1
+            self.ctx.memory_barrier()
+            audio_service.reduce(audio_settings, voice_count)
+            self.ctx.memory_barrier()
+            # Blocking read: offline has no deadline, so this is simpler and
+            # cheaper than fencing.
+            out.append(audio_service.condition_block(
+                audio_settings, audio_service.read_slot(slot)))
+        return out
 
     # ------------------------------------------------------------------
     # Rendering

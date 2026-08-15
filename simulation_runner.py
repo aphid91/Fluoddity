@@ -15,6 +15,9 @@ class SimulationRunner:
         self.sim = sim
         self.camera = camera
         self.video_service = video_service
+        # Optional callback(assembled_tex, ui_state) run before a recorded
+        # frame is encoded, for compositing overlays into the video.
+        self.pre_record_hook = None
         self.command_handler = command_handler
         self.window = window
         self.advanced_drawing_processor = advanced_drawing_processor
@@ -299,6 +302,11 @@ class SimulationRunner:
             )
         self.camera.assembled_texture = assembled_tex
         if self.video_service.is_active():
+            # Let the orchestrator composite overlays (e.g. streamlines) into
+            # the frame before it is handed to the encoder. Drawing them to
+            # the screen instead would leave them out of the video entirely.
+            if self.pre_record_hook is not None:
+                self.pre_record_hook(assembled_tex, ui_state)
             self.video_service.process_frame(
                 self.camera.ctx,
                 assembled_tex,
