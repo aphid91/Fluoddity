@@ -247,7 +247,8 @@ class StreamlineService:
         groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
 
         self._bind()
-        self._set_trace_uniforms(settings, seed_world, steps, count)
+        self._set_trace_uniforms(settings, seed_world, steps, count,
+                                 canvas_texture)
 
         tryset(self.trace_program, 'AUDIO_ENABLED', bool(audio_on))
         if audio_on:
@@ -296,8 +297,16 @@ class StreamlineService:
 
         return issued
 
-    def _set_trace_uniforms(self, settings, seed_world, steps, count):
-        """Push the physics uniforms shared by the realtime and offline paths."""
+    def _set_trace_uniforms(self, settings, seed_world, steps, count,
+                            canvas_texture):
+        """Push the physics uniforms shared by the realtime and offline paths.
+
+        Binds the canvas texture here rather than leaving it to the caller:
+        the bind and the sampler uniform have to travel together, and
+        separating them once already cost a bug where the realtime path
+        sampled whatever happened to be in unit 0.
+        """
+        canvas_texture.use(location=0)
         tryset(self.trace_program, 'canvas_texture', 0)
         tryset(self.trace_program, 'seed_pos', tuple(seed_world))
         tryset(self.trace_program, 'STEPS_PER_DISPATCH', steps)
@@ -340,8 +349,8 @@ class StreamlineService:
 
         self._bind()
         audio_service.bind()
-        canvas_texture.use(location=0)
-        self._set_trace_uniforms(settings, seed_world, AUDIO_BLOCK, count)
+        self._set_trace_uniforms(settings, seed_world, AUDIO_BLOCK, count,
+                                 canvas_texture)
         tryset(self.trace_program, 'AUDIO_ENABLED', True)
         tryset(self.trace_program, 'AUDIO_VOICE_COUNT', voice_count)
         tryset(self.trace_program, 'AUDIO_LANE_STRIDE', audio_service.lane_stride)
