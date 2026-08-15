@@ -1,36 +1,61 @@
-"""Streamline Service - Traces and draws test particle paths through the field.
+"""Streamline Service - Stateful, ring-buffered particle tracing.
 
-Test particles are released at the cursor and accelerated by the canvas vector
-field. A compute shader integrates every streamline in parallel (one invocation
-each, the whole path per invocation), writing positions into per-streamline
-slices of an SSBO; an instanced line-strip pass then draws those slices.
+Particles persist between dispatches. Each dispatch advances every particle a
+few integration steps and appends the new positions to that particle's ring
+buffer; the draw pass renders the most recent slice of each ring as a line
+strip.
+
+The tracer runs on its own clock, independent of both the render loop and the
+physics stepping. `update()` accumulates elapsed wall-clock time and issues as
+many dispatches as that time is worth (capped per frame), which is the same
+producer shape as demos/audio.py's pump(): a fixed, small amount of work per
+dispatch, decoupled from frame cadence. That is what lets a future audio tap
+emit one block per dispatch at a rate the audio device dictates.
 """
 import moderngl
 import numpy as np
 from utilities.gl_helpers import read_shader, tryset
-from state.streamline_state import MAX_STEPS, MAX_STREAMLINES
+from state.streamline_state import (
+    MAX_STEPS, MAX_STREAMLINES, MAX_DISPATCHES_PER_FRAME,
+)
 
-# SSBO binding point. 0/2/3/4 are claimed by sim.py's entity and rule buffers.
+# SSBO binding points. 0/2/3/4 are claimed by sim.py's entity and rule buffers.
 PATH_BINDING = 5
+STATE_BINDING = 6
 
-# Invocations per workgroup; must match local_size_x in streamline_trace.glsl.
+# Invocations per workgroup; must match local_size_x in the compute shaders.
 LOCAL_SIZE = 64
+
+# Bytes per ParticleState record: vec2 pos + vec2 vel + 4 uints (std430,
+# padded to a 16-byte multiple).
+STATE_STRIDE = 32
 
 
 class StreamlineService:
-    """Traces streamlines from the cursor and renders them as an overlay."""
+    """Traces persistent streamline particles and renders their recent paths."""
 
     def __init__(self, ctx: moderngl.Context):
         self.ctx = ctx
         self.trace_program = None
+        self.reset_program = None
         self.draw_program = None
         self.path_buffer = None
+        self.state_buffer = None
         self.vao = None
-        self._frame = 0
+
+        # Scheduling
+        self._accumulator = 0.0  # Unspent time, in seconds
+        self._dispatch_count = 0  # Total dispatches issued (drives reseeding)
+        self._last_count = 0  # Population size at the last reset
+        self._needs_reset = True  # Force a seed before the first dispatch
+
         self._max_line_width = self._query_max_line_width()
         self._compile()
         self._allocate()
 
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
     def _query_max_line_width(self) -> float:
         """Largest line width the driver will actually rasterize.
 
@@ -51,7 +76,7 @@ class StreamlineService:
         return self._max_line_width
 
     def _compile(self) -> bool:
-        """Compile both programs. Returns True if both succeeded.
+        """Compile all three programs. Returns True if every one succeeded.
 
         On failure the previously working programs are left untouched, so a
         typo during live shader editing does not take the overlay down.
@@ -64,6 +89,14 @@ class StreamlineService:
             return False
 
         try:
+            reset = self.ctx.compute_shader(read_shader('shaders/streamline_reset.glsl'))
+        except Exception as e:
+            print('Streamline reset shader compilation failed:')
+            print(e)
+            trace.release()
+            return False
+
+        try:
             draw = self.ctx.program(
                 vertex_shader=read_shader('shaders/streamline.vert'),
                 fragment_shader=read_shader('shaders/streamline.frag'),
@@ -72,95 +105,164 @@ class StreamlineService:
             print('Streamline draw shader compilation failed:')
             print(e)
             trace.release()
+            reset.release()
             return False
 
-        # Both compiled - swap them in and retire the old ones.
-        old_trace, old_draw, old_vao = self.trace_program, self.draw_program, self.vao
+        old = (self.trace_program, self.reset_program, self.draw_program, self.vao)
         self.trace_program = trace
+        self.reset_program = reset
         self.draw_program = draw
-        # No vertex buffer: the vertex shader pulls positions from the SSBO
-        # by gl_VertexID, so the VAO carries no attributes.
+        # No vertex buffer: the vertex shader pulls positions from the ring by
+        # gl_VertexID, so the VAO carries no attributes.
         self.vao = self.ctx.vertex_array(draw, [])
 
-        if old_vao is not None:
-            old_vao.release()
-        if old_trace is not None:
-            old_trace.release()
-        if old_draw is not None:
-            old_draw.release()
+        for obj in old:
+            if obj is not None:
+                obj.release()
         return True
 
     def _allocate(self):
-        """Allocate the path buffer: one slice of MAX_STEPS+1 vec2 per line."""
-        if self.path_buffer is not None:
-            return
-        slots = MAX_STREAMLINES * (MAX_STEPS + 1)
-        self.path_buffer = self.ctx.buffer(
-            np.zeros((slots, 2), dtype=np.float32).tobytes()
-        )
+        """Allocate the ring and particle-state buffers."""
+        if self.path_buffer is None:
+            slots = MAX_STREAMLINES * MAX_STEPS
+            self.path_buffer = self.ctx.buffer(
+                np.zeros((slots, 2), dtype=np.float32).tobytes()
+            )
+        if self.state_buffer is None:
+            self.state_buffer = self.ctx.buffer(
+                np.zeros(MAX_STREAMLINES * STATE_STRIDE, dtype=np.uint8).tobytes()
+            )
 
     def reload(self):
         """Recompile shaders. Called from command_handler on V key press."""
         if self._compile():
             print('Streamline shaders reloaded')
 
-    def render(self, canvas_texture: moderngl.Texture, seed_world: tuple[float, float],
-               cam_pos: tuple[float, float], cam_zoom: float,
-               canvas_resolution: tuple[int, int], window_size: tuple[int, int],
-               settings):
-        """
-        Trace and draw streamlines seeded at seed_world.
+    # ------------------------------------------------------------------
+    # Simulation
+    # ------------------------------------------------------------------
+    def request_reset(self):
+        """Re-seed every particle on the next update."""
+        self._needs_reset = True
+
+    def _bind(self):
+        self.path_buffer.bind_to_storage_buffer(PATH_BINDING)
+        self.state_buffer.bind_to_storage_buffer(STATE_BINDING)
+
+    def _random_seed(self, settings) -> float:
+        if not settings.resample_each_frame:
+            return 0.0
+        return float(self._dispatch_count) * 0.618
+
+    def _reset(self, seed_world, settings, count):
+        """Place every particle at the seed and clear its ring."""
+        self._bind()
+        tryset(self.reset_program, 'seed_pos', tuple(seed_world))
+        tryset(self.reset_program, 'RING_CAPACITY', MAX_STEPS)
+        tryset(self.reset_program, 'STREAMLINE_COUNT', count)
+        tryset(self.reset_program, 'INITIAL_SPEED', float(settings.initial_speed))
+        tryset(self.reset_program, 'RANDOM_SEED', self._random_seed(settings))
+        self.reset_program.run((count + LOCAL_SIZE - 1) // LOCAL_SIZE, 1, 1)
+        self.ctx.memory_barrier()
+        self._needs_reset = False
+        self._last_count = count
+
+    def update(self, canvas_texture: moderngl.Texture,
+               seed_world: tuple[float, float], settings, dt: float):
+        """Advance the tracer by however many dispatches `dt` is worth.
 
         Args:
             canvas_texture: Canvas texture holding the vector field (RG)
             seed_world: Seed position in world space [-1, 1]
-            cam_pos: Camera position (x, y)
-            cam_zoom: Camera zoom level
-            canvas_resolution: Canvas texture resolution (width, height)
-            window_size: Window size (width, height)
-            settings: StreamlineState with integration and appearance params
-        """
-        if self.trace_program is None or self.draw_program is None:
-            return
+            settings: StreamlineState
+            dt: Wall-clock seconds since the last update
 
-        steps = int(max(2, min(settings.steps, MAX_STEPS)))
+        Returns:
+            Number of dispatches issued this call.
+        """
+        if self.trace_program is None:
+            return 0
+
         count = int(max(1, min(settings.count, MAX_STREAMLINES)))
 
-        self._frame += 1
-        # Holding the seed fixed freezes the spray's launch directions, so the
-        # fan stays put and only the field's evolution moves it.
-        random_seed = float(self._frame) * 0.618 if settings.resample_each_frame else 0.0
+        # A population change invalidates the existing state records.
+        if count != self._last_count:
+            self._needs_reset = True
 
-        # --- Pass 1: integrate every streamline into the SSBO ---
+        if settings.request_reset:
+            settings.request_reset = False
+            self._needs_reset = True
+
+        if self._needs_reset:
+            self._reset(seed_world, settings, count)
+
+        if not settings.running:
+            self._accumulator = 0.0
+            return 0
+
+        # Convert elapsed time into a whole number of dispatches, keeping the
+        # remainder so the long-run rate stays accurate.
+        rate = max(1.0, float(settings.dispatch_hz))
+        self._accumulator += max(0.0, dt)
+        n = int(self._accumulator * rate)
+        if n <= 0:
+            return 0
+        # Drop backlog beyond the cap rather than queueing a burst after a
+        # hitch; catching up on stale time is worse than losing it.
+        if n > MAX_DISPATCHES_PER_FRAME:
+            n = MAX_DISPATCHES_PER_FRAME
+            self._accumulator = 0.0
+        else:
+            self._accumulator -= n / rate
+
+        steps = int(max(1, min(settings.steps_per_dispatch, MAX_STEPS)))
+        groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
+
+        self._bind()
         canvas_texture.use(location=0)
         tryset(self.trace_program, 'canvas_texture', 0)
         tryset(self.trace_program, 'seed_pos', tuple(seed_world))
-        tryset(self.trace_program, 'STEPS', steps)
-        tryset(self.trace_program, 'MAX_STEPS', MAX_STEPS)
+        tryset(self.trace_program, 'STEPS_PER_DISPATCH', steps)
+        tryset(self.trace_program, 'RING_CAPACITY', MAX_STEPS)
         tryset(self.trace_program, 'STREAMLINE_COUNT', count)
         tryset(self.trace_program, 'FORCE_SCALE', float(settings.force_scale))
         tryset(self.trace_program, 'DAMPING', float(settings.damping))
         tryset(self.trace_program, 'STEP_SIZE', float(settings.step_size))
         tryset(self.trace_program, 'RESTORE_FORCE', float(settings.restore_force))
         tryset(self.trace_program, 'INITIAL_SPEED', float(settings.initial_speed))
-        tryset(self.trace_program, 'RANDOM_SEED', random_seed)
+        tryset(self.trace_program, 'STOP_AT_EDGE', bool(settings.stop_at_edge))
+        tryset(self.trace_program, 'RESPAWN_AT_SEED', bool(settings.respawn_at_seed))
 
-        self.path_buffer.bind_to_storage_buffer(PATH_BINDING)
-        groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
-        self.trace_program.run(groups, 1, 1)
+        for _ in range(n):
+            tryset(self.trace_program, 'RANDOM_SEED', self._random_seed(settings))
+            self.trace_program.run(groups, 1, 1)
+            self._dispatch_count += 1
+            # Each dispatch reads the state the previous one wrote. This is
+            # also where an audio tap would fence and read back its block.
+            self.ctx.memory_barrier()
 
-        # The draw pass reads what the compute pass just wrote.
-        self.ctx.memory_barrier()
+        return n
 
-        # --- Pass 2: draw each slice as a line strip ---
-        # Every instance is drawn with the same vertex count; the vertex shader
-        # collapses and flags vertices past each streamline's own valid count,
-        # so no readback (and no pipeline stall) is needed here.
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+    def draw(self, cam_pos: tuple[float, float], cam_zoom: float,
+             canvas_resolution: tuple[int, int], window_size: tuple[int, int],
+             settings):
+        """Draw the recent tail of every particle's ring."""
+        if self.draw_program is None:
+            return
+
+        count = int(max(1, min(settings.count, MAX_STREAMLINES)))
+        tail = int(max(2, min(settings.tail_length, MAX_STEPS)))
+
+        self._bind()
         tryset(self.draw_program, 'cam_pos', cam_pos)
         tryset(self.draw_program, 'cam_zoom', cam_zoom)
         tryset(self.draw_program, 'canvas_resolution', canvas_resolution)
         tryset(self.draw_program, 'window_size', window_size)
-        tryset(self.draw_program, 'MAX_STEPS', MAX_STEPS)
+        tryset(self.draw_program, 'RING_CAPACITY', MAX_STEPS)
+        tryset(self.draw_program, 'TAIL_LENGTH', tail)
         tryset(self.draw_program, 'line_color', tuple(settings.color))
         tryset(self.draw_program, 'line_opacity', float(settings.opacity))
 
@@ -174,7 +276,7 @@ class StreamlineService:
         if width != prev_width:
             self.ctx.line_width = width
 
-        self.vao.render(mode=moderngl.LINE_STRIP, vertices=steps, instances=count)
+        self.vao.render(mode=moderngl.LINE_STRIP, vertices=tail, instances=count)
 
         if width != prev_width:
             self.ctx.line_width = prev_width
@@ -183,11 +285,7 @@ class StreamlineService:
 
     def cleanup(self):
         """Clean up GPU resources."""
-        if self.vao is not None:
-            self.vao.release()
-        if self.trace_program is not None:
-            self.trace_program.release()
-        if self.draw_program is not None:
-            self.draw_program.release()
-        if self.path_buffer is not None:
-            self.path_buffer.release()
+        for obj in (self.vao, self.trace_program, self.reset_program,
+                    self.draw_program, self.path_buffer, self.state_buffer):
+            if obj is not None:
+                obj.release()

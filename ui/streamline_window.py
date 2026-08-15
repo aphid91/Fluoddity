@@ -1,10 +1,10 @@
-"""Streamlines window: controls for the cursor-seeded streamline probe."""
+"""Streamlines window: controls for the persistent streamline particles."""
 from imgui_bundle import imgui
 from state.streamline_state import MAX_STEPS, MAX_STREAMLINES
 
 
 class StreamlineWindowMixin:
-    """Mixin for streamline probe controls. Combined into UI via multiple inheritance."""
+    """Mixin for streamline controls. Combined into UI via multiple inheritance."""
 
     def render_streamline_window(self):
         """Render the Streamlines control window."""
@@ -19,8 +19,22 @@ class StreamlineWindowMixin:
             s = self.state.streamline
 
             imgui.text_wrapped(
-                "Releases a test particle at the cursor with no velocity and "
-                "traces its path through the canvas force field."
+                "Persistent particles carried by the canvas force field. "
+                "They keep streaming until reset."
+            )
+
+            # === Transport ===
+            if imgui.button("Reset to Seed"):
+                s.request_reset = True
+            self._delayed_tooltip(
+                "Re-place every particle at the seed position\n"
+                "and clear its path history."
+            )
+            imgui.same_line()
+            _, s.running = imgui.checkbox("Running", s.running)
+            self._delayed_tooltip(
+                "Pause the tracer without pausing the simulation\n"
+                "(or vice versa - the two clocks are independent)."
             )
 
             # Seed pinning (middle-click in the viewport does the same thing)
@@ -35,18 +49,38 @@ class StreamlineWindowMixin:
 
             imgui.separator()
 
-            _, s.steps = imgui.slider_int("Steps", s.steps, 2, MAX_STEPS)
+            # === Schedule ===
+            imgui.text("Schedule")
+            _, s.dispatch_hz = imgui.slider_float(
+                "Dispatch Rate", s.dispatch_hz, 1.0, 2000.0, format="%.0f Hz",
+                flags=imgui.SliderFlags_.logarithmic
+            )
             self._delayed_tooltip(
-                "Number of integration steps.\n"
-                "Longer paths follow the field further ahead."
+                "Tracer dispatches per second, independent of frame rate\n"
+                "and of the physics step rate."
             )
 
+            _, s.steps_per_dispatch = imgui.slider_int(
+                "Steps / Dispatch", s.steps_per_dispatch, 1, 512
+            )
+            self._delayed_tooltip(
+                "Integration steps advanced per dispatch.\n"
+                "Rate x Steps = integration steps per second."
+            )
+            imgui.text_disabled(
+                f"  = {s.dispatch_hz * s.steps_per_dispatch:,.0f} steps/sec"
+            )
+
+            imgui.separator()
+
+            # === Integration ===
+            imgui.text("Integration")
             _, s.force_scale = imgui.slider_float(
                 "Force Scale", s.force_scale, 0.0, 20.0, format="%.3f"
             )
             self._delayed_tooltip(
                 "Converts canvas values into acceleration.\n"
-                "Raise this if the streamline barely moves."
+                "Raise this if the particles barely move."
             )
 
             _, s.damping = imgui.slider_float(
@@ -71,49 +105,65 @@ class StreamlineWindowMixin:
                 flags=imgui.SliderFlags_.logarithmic
             )
             self._delayed_tooltip(
-                "Spring force pulling the particle back toward the seed.\n"
-                "0 lets it drift free; higher values tether it to the cursor\n"
-                "so it orbits and stays on screen longer.\n"
+                "Spring force pulling particles back toward the seed.\n"
+                "Raise it and the population gathers at the cursor, so you\n"
+                "can drag the swarm around the canvas.\n"
                 "Scaled by Step Size in the shader, so it needs large values\n"
-                "to bite - log scale. Lowering Step Size raises the value needed."
+                "to bite - log scale. Lowering Step Size raises what you need."
             )
 
             imgui.separator()
 
-            # === Multi-streamline spray ===
+            # === Population ===
+            imgui.text("Population")
             _, s.count = imgui.slider_int("Count", s.count, 1, MAX_STREAMLINES)
             self._delayed_tooltip(
-                "Number of streamlines launched from the cursor.\n"
-                "Above 1, each gets a random initial velocity so the\n"
-                "paths fan out instead of overlapping."
+                "Number of particles. Changing this re-seeds them all."
             )
-
-            spray = s.count > 1
-            if not spray:
-                imgui.begin_disabled()
 
             _, s.initial_speed = imgui.slider_float(
                 "Initial Speed", s.initial_speed, 0.0, 5.0, format="%.3f"
             )
             self._delayed_tooltip(
-                "Maximum magnitude of the random launch velocity.\n"
-                "Higher values throw the spray wider before the\n"
-                "field takes over."
+                "Maximum magnitude of the random launch velocity\n"
+                "given to each particle when it is seeded."
             )
 
             _, s.resample_each_frame = imgui.checkbox(
-                "Resample Each Frame", s.resample_each_frame
+                "Resample Launch Directions", s.resample_each_frame
             )
             self._delayed_tooltip(
-                "Redraw the random launch directions every frame.\n"
-                "Uncheck to freeze the fan so only the evolving\n"
-                "field moves the paths."
+                "Draw fresh random launch directions on each reset\n"
+                "and respawn. Uncheck for a repeatable fan."
             )
 
-            if not spray:
+            _, s.stop_at_edge = imgui.checkbox("Stop At Edge", s.stop_at_edge)
+            self._delayed_tooltip(
+                "Retire particles that leave the canvas.\n"
+                "Unchecked, they slide along the boundary instead."
+            )
+
+            if not s.stop_at_edge:
+                imgui.begin_disabled()
+            _, s.respawn_at_seed = imgui.checkbox("Respawn At Seed", s.respawn_at_seed)
+            self._delayed_tooltip(
+                "Retired particles restart at the seed, so the\n"
+                "population keeps streaming indefinitely."
+            )
+            if not s.stop_at_edge:
                 imgui.end_disabled()
 
             imgui.separator()
+
+            # === Display ===
+            imgui.text("Display")
+            _, s.tail_length = imgui.slider_int(
+                "Tail Length", s.tail_length, 2, MAX_STEPS
+            )
+            self._delayed_tooltip(
+                f"Ring entries drawn per particle (max {MAX_STEPS:,}).\n"
+                "Older history is overwritten as the ring wraps."
+            )
 
             changed, color = imgui.color_edit3("Line Color", list(s.color))
             if changed:

@@ -67,6 +67,7 @@ class App:
         self.config_saver = ConfigSaver()
         self.arrow_debug_service = ArrowDebugService(self.ctx)
         self.streamline_service = StreamlineService(self.ctx)
+        self._streamline_last_time = time.time()  # Tracer's own clock
         self.multi_load_service = MultiLoadService()
         self.advanced_drawing_processor = AdvancedDrawingProcessor(self.ctx)
         self.ui.multi_load_service = self.multi_load_service
@@ -336,15 +337,30 @@ class App:
 
             seed = streamline.pinned_seed if streamline.seed_pinned else cursor_seed
 
-            self.streamline_service.render(
+            # The tracer runs on its own clock, so it keeps its rate whether or
+            # not the physics is paused and regardless of the frame rate.
+            now = time.time()
+            dt = now - self._streamline_last_time
+            self._streamline_last_time = now
+            # Clamp so a hitch or a breakpoint cannot inject a huge dt.
+            dt = min(max(dt, 0.0), 0.25)
+
+            self.streamline_service.update(
                 canvas_texture=self.sim.can,
                 seed_world=seed,
+                settings=streamline,
+                dt=dt,
+            )
+            self.streamline_service.draw(
                 cam_pos=tuple(self.camera.position),
                 cam_zoom=self.camera.zoom,
                 canvas_resolution=self.sim.can.size,
                 window_size=(width, height),
                 settings=streamline,
             )
+        else:
+            # Keep the clock from banking time while the overlay is off.
+            self._streamline_last_time = time.time()
 
         # 8. Update UI display info and render
         self.ui.update_display_info({
