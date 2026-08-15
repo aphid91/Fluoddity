@@ -51,25 +51,39 @@ class StreamlineWindowMixin:
 
             # === Schedule ===
             imgui.text("Schedule")
+            # Audio owns the clock while it is on: one block of samples per
+            # dispatch, at the device's sample rate.
+            audio_locked = self.state.audio.enabled
+            if audio_locked:
+                imgui.begin_disabled()
+
             _, s.dispatch_hz = imgui.slider_float(
                 "Dispatch Rate", s.dispatch_hz, 1.0, 2000.0, format="%.0f Hz",
                 flags=imgui.SliderFlags_.logarithmic
             )
-            self._delayed_tooltip(
-                "Tracer dispatches per second, independent of frame rate\n"
-                "and of the physics step rate."
-            )
+            if not audio_locked:
+                self._delayed_tooltip(
+                    "Tracer dispatches per second, independent of frame rate\n"
+                    "and of the physics step rate."
+                )
 
             _, s.steps_per_dispatch = imgui.slider_int(
                 "Steps / Dispatch", s.steps_per_dispatch, 1, 512
             )
-            self._delayed_tooltip(
-                "Integration steps advanced per dispatch.\n"
-                "Rate x Steps = integration steps per second."
-            )
+            if not audio_locked:
+                self._delayed_tooltip(
+                    "Integration steps advanced per dispatch.\n"
+                    "Rate x Steps = integration steps per second."
+                )
+
+            if audio_locked:
+                imgui.end_disabled()
+
             imgui.text_disabled(
                 f"  = {s.dispatch_hz * s.steps_per_dispatch:,.0f} steps/sec"
             )
+            if audio_locked:
+                imgui.text_disabled("  locked by Audio")
 
             imgui.separator()
 

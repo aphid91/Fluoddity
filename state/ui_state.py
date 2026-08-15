@@ -5,6 +5,7 @@ from .recording_state import RecordingState
 from .preferences_state import PreferencesState
 from .multi_load_state import MultiLoadState
 from .streamline_state import StreamlineState
+from .audio_state import AudioState
 
 
 @dataclass
@@ -16,6 +17,7 @@ class UIState:
     preferences: PreferencesState = field(default_factory=PreferencesState)
     multi_load: MultiLoadState = field(default_factory=MultiLoadState)
     streamline: StreamlineState = field(default_factory=StreamlineState)
+    audio: AudioState = field(default_factory=AudioState)
 
     # Input state (updated by callbacks)
     keys_pressed: set = field(default_factory=set)

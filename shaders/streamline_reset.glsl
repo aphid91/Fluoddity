@@ -15,8 +15,10 @@ struct ParticleState {
     vec2 vel;
     uint write_index;
     uint alive;
-    uint _pad0;
-    uint _pad1;
+    float hp_x1;   // Audio one-pole high-pass state
+    float hp_y1;
+    float ramp;    // Post-reset gain ramp
+    float _pad0;
 };
 
 layout(std430, binding = 6) buffer StreamlineState {
@@ -72,6 +74,11 @@ void main() {
     particles[line_id].vel = vel;
     particles[line_id].write_index = 0u;
     particles[line_id].alive = 1u;
+    // A full reset is a hard restart, so clear the filter rather than
+    // carrying it: there is no previous lifetime to blend out of.
+    particles[line_id].hp_x1 = 0.0;
+    particles[line_id].hp_y1 = 0.0;
+    particles[line_id].ramp = 1.0;  // Still ramp in, to avoid a click
 
     // Collapse the ring onto the start point so no stale geometry survives.
     int base = line_id * RING_CAPACITY;

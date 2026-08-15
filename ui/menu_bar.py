@@ -359,6 +359,16 @@ class MenuBarMixin:
                     "and carried by the canvas force field."
                 )
 
+                # Audio toggle
+                _, self.state.audio.enabled = imgui.checkbox(
+                    "Audio",
+                    self.state.audio.enabled
+                )
+                self._delayed_tooltip(
+                    "Drive an audio voice from a streamline particle.\n"
+                    "Locks the streamline dispatch rate to the sample rate."
+                )
+
                 # Multi Load toggle
                 _, self.state.multi_load.multi_load_enabled = imgui.checkbox(
                     "Multi Load - EXPERIMENTAL",

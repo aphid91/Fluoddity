@@ -26,12 +26,22 @@ struct ParticleState {
     vec2 vel;
     uint write_index;  // Total positions ever written (not yet wrapped)
     uint alive;        // 0 = retired (left the canvas)
-    uint _pad0;
-    uint _pad1;
+    // Audio voice state, carried across dispatches like pos/vel. Packed into
+    // the existing padding so the struct stays 32 bytes.
+    float hp_x1;       // Previous raw sample   (one-pole high pass)
+    float hp_y1;       // Previous filtered out (one-pole high pass)
+    float ramp;        // Post-reset gain ramp, counts down 1 -> 0
+    float _pad0;
 };
 
 layout(std430, binding = 6) buffer StreamlineState {
     ParticleState particles[];
+};
+
+// One float per sample for the voice particle. Written only when
+// AUDIO_ENABLED; slot k of the current block is index AUDIO_SLOT_BASE + k.
+layout(std430, binding = 7) buffer StreamlineAudio {
+    float audio_samples[];
 };
 
 uniform sampler2D canvas_texture;
@@ -52,6 +62,14 @@ uniform float HAZARD_RATE;          // Per-step chance a particle resets to seed
 uniform uint DISPATCH_INDEX;        // Decorrelates the hazard roll per dispatch
 uniform float SEED_SCATTER;         // Radius of each particle's own spring target
 uniform uint RUN_SALT;              // Reseeds the whole population per reset
+
+// --- Audio voice (first pass: a single particle drives one voice) ---
+uniform bool AUDIO_ENABLED;
+uniform int AUDIO_VOICE;            // Which particle emits samples
+uniform int AUDIO_SLOT_BASE;        // Start index of this block in the ring
+uniform float AUDIO_AMPLITUDE;
+uniform float AUDIO_HP_COEFF;       // One-pole high-pass coefficient
+uniform float AUDIO_RAMP_DEC;       // Per-sample decrement of the reset ramp
 
 vec2 sample_field(vec2 world_pos) {
     return texture(canvas_texture, world_pos * 0.5 + 0.5).xy;
@@ -127,14 +145,33 @@ void main() {
     uint write_index = particles[line_id].write_index;
     uint alive = particles[line_id].alive;
 
+    // Audio voice state. Carried across dispatches so the filter and the
+    // post-reset ramp survive block boundaries.
+    bool is_voice = AUDIO_ENABLED && line_id == AUDIO_VOICE;
+    float hp_x1 = particles[line_id].hp_x1;
+    float hp_y1 = particles[line_id].hp_y1;
+    float ramp = particles[line_id].ramp;
+
     // A retired particle either sits out or restarts at the seed.
     if (alive == 0u) {
         if (!RESPAWN_AT_SEED) {
+            // The voice must still emit a full block even when its particle
+            // is retired, or the audio stream would develop holes.
+            if (is_voice) {
+                for (int k = 0; k < STEPS_PER_DISPATCH; ++k) {
+                    // Let the filter relax toward zero rather than freezing a
+                    // DC offset in place.
+                    hp_y1 *= AUDIO_HP_COEFF;
+                    audio_samples[AUDIO_SLOT_BASE + k] = hp_y1;
+                }
+                particles[line_id].hp_y1 = hp_y1;
+            }
             return;
         }
         pos = seed_pos + seed_offset(line_id);
         vel = launch_velocity(line_id, RUN_SALT ^ (DISPATCH_INDEX * 0x9e3779b9u));
         alive = 1u;
+        ramp = 1.0;
     }
 
     for (int k = 0; k < STEPS_PER_DISPATCH; ++k) {
@@ -151,6 +188,11 @@ void main() {
                 // No extra ring write here: the position jump back to the
                 // seed is what the draw pass keys on to break the strip, and
                 // writing the seed twice would just burn a ring slot.
+                //
+                // The audio voice carries its filter state across the reset
+                // (so the DC step decays instead of jumping) and re-arms the
+                // gain ramp, which hides the discontinuity in dot(vel, field).
+                ramp = 1.0;
             }
         }
 
@@ -187,6 +229,15 @@ void main() {
         if (out_of_bounds(pos)) {
             if (STOP_AT_EDGE) {
                 alive = 0u;
+                // Pad the rest of the block so it stays exactly
+                // STEPS_PER_DISPATCH samples long; a short block would
+                // desynchronise the audio stream.
+                if (is_voice) {
+                    for (int j = k; j < STEPS_PER_DISPATCH; ++j) {
+                        hp_y1 *= AUDIO_HP_COEFF;
+                        audio_samples[AUDIO_SLOT_BASE + j] = hp_y1;
+                    }
+                }
                 break;
             }
             // Otherwise wrap to the opposite edge and keep going. Clamping
@@ -199,10 +250,37 @@ void main() {
 
         path[base + int(write_index % uint(RING_CAPACITY))] = pos;
         write_index += 1u;
+
+        // --- Audio sample for this integration step ---
+        if (is_voice) {
+            // Project the particle's motion onto the field it is moving
+            // through: large when it is being driven hard, near zero when it
+            // drifts across a null.
+            float raw = dot(vel, sample_field(pos)) * AUDIO_AMPLITUDE;
+
+            // One-pole high pass (DC blocker). Carrying x1/y1 across a reset
+            // turns the position discontinuity into a decaying step rather
+            // than a permanent offset.
+            float y = AUDIO_HP_COEFF * (hp_y1 + raw - hp_x1);
+            hp_x1 = raw;
+            hp_y1 = y;
+
+            // Post-reset gain ramp. The high pass fixes the DC step but not
+            // the instantaneous jump, which would otherwise click.
+            if (ramp > 0.0) {
+                y *= (1.0 - ramp);
+                ramp = max(0.0, ramp - AUDIO_RAMP_DEC);
+            }
+
+            audio_samples[AUDIO_SLOT_BASE + k] = y;
+        }
     }
 
     particles[line_id].pos = pos;
     particles[line_id].vel = vel;
     particles[line_id].write_index = write_index;
     particles[line_id].alive = alive;
+    particles[line_id].hp_x1 = hp_x1;
+    particles[line_id].hp_y1 = hp_y1;
+    particles[line_id].ramp = ramp;
 }

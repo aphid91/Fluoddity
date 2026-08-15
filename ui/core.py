@@ -27,6 +27,7 @@ from .physics_window import PhysicsWindowMixin
 from .advanced_drawing_window import AdvancedDrawingWindowMixin
 from .field_loader_window import FieldLoaderWindowMixin
 from .streamline_window import StreamlineWindowMixin
+from .audio_window import AudioWindowMixin
 
 
 @dataclass
@@ -48,6 +49,7 @@ class UI(
     AdvancedDrawingWindowMixin,
     FieldLoaderWindowMixin,
     StreamlineWindowMixin,
+    AudioWindowMixin,
 ):
     """Passive UI - renders widgets, exposes state, handles no logic."""
 
@@ -686,6 +688,10 @@ class UI(
         # Render Streamlines window if enabled (hidden when windows toggled off)
         if self.show_sidebar and self.state.streamline.enabled:
             self.render_streamline_window()
+
+        # Render Audio window if enabled (hidden when windows toggled off)
+        if self.show_sidebar and self.state.audio.enabled:
+            self.render_audio_window()
 
         # Render field loader window (transient, not gated by sidebar)
         self.render_field_loader_window()

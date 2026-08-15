@@ -8,12 +8,16 @@ from dataclasses import dataclass
 MAX_STEPS = 16384
 
 # Upper bound on simultaneous particles. The path buffer holds
-# MAX_STREAMLINES slices of MAX_STEPS vec2.
-MAX_STREAMLINES = 128
+# MAX_STREAMLINES slices of MAX_STEPS vec2 -> 1024 * 16384 * 8B = 134 MB.
+MAX_STREAMLINES = 1024
 
 # Safety cap on catch-up dispatches per rendered frame. Without this, a hitch
 # (or a paused debugger) would queue an unbounded burst of GPU work on resume.
+# Audio mode needs a much higher ceiling: at 48kHz/512 the tracer owes ~1.6
+# dispatches per 60fps frame, and dropping one is an audible gap rather than
+# a dropped video frame, so audio raises this (see AUDIO_MAX_DISPATCHES).
 MAX_DISPATCHES_PER_FRAME = 64
+AUDIO_MAX_DISPATCHES_PER_FRAME = 16
 
 
 @dataclass

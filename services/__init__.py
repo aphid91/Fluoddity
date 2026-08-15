@@ -6,5 +6,6 @@ from .arrow_debug_service import ArrowDebugService
 from .multi_load_service import MultiLoadService
 from .field_handler import FieldHandler
 from .streamline_service import StreamlineService
+from .audio_service import AudioService
 
-__all__ = ['RuleManager', 'EntityPicker', 'VideoRecorderService', 'ConfigSaver', 'ArrowDebugService', 'MultiLoadService', 'FieldHandler', 'StreamlineService']
+__all__ = ['RuleManager', 'EntityPicker', 'VideoRecorderService', 'ConfigSaver', 'ArrowDebugService', 'MultiLoadService', 'FieldHandler', 'StreamlineService', 'AudioService']

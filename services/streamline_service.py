@@ -17,6 +17,7 @@ import numpy as np
 from utilities.gl_helpers import read_shader, tryset
 from state.streamline_state import (
     MAX_STEPS, MAX_STREAMLINES, MAX_DISPATCHES_PER_FRAME,
+    AUDIO_MAX_DISPATCHES_PER_FRAME,
 )
 
 # SSBO binding points. 0/2/3/4 are claimed by sim.py's entity and rule buffers.
@@ -26,9 +27,9 @@ STATE_BINDING = 6
 # Invocations per workgroup; must match local_size_x in the compute shaders.
 LOCAL_SIZE = 64
 
-# Bytes per ParticleState record: vec2 pos + vec2 vel + 4 uints (std430,
-# padded to a 16-byte multiple).
-STATE_STRIDE = 32
+# Bytes per ParticleState record (std430): vec2 pos + vec2 vel + 2 uints
+# + 4 floats of audio voice state.
+STATE_STRIDE = 40
 
 
 class StreamlineService:
@@ -176,7 +177,8 @@ class StreamlineService:
         self._last_count = count
 
     def update(self, canvas_texture: moderngl.Texture,
-               seed_world: tuple[float, float], settings, dt: float):
+               seed_world: tuple[float, float], settings, dt: float,
+               audio_service=None, audio_settings=None):
         """Advance the tracer by however many dispatches `dt` is worth.
 
         Args:
@@ -184,12 +186,17 @@ class StreamlineService:
             seed_world: Seed position in world space [-1, 1]
             settings: StreamlineState
             dt: Wall-clock seconds since the last update
+            audio_service: AudioService, when audio is driving the clock
+            audio_settings: AudioState, when audio is driving the clock
 
         Returns:
             Number of dispatches issued this call.
         """
         if self.trace_program is None:
             return 0
+
+        audio_on = (audio_service is not None and audio_settings is not None
+                    and audio_settings.enabled and audio_service.active)
 
         count = int(max(1, min(settings.count, MAX_STREAMLINES)))
 
@@ -208,20 +215,32 @@ class StreamlineService:
             self._accumulator = 0.0
             return 0
 
-        # Convert elapsed time into a whole number of dispatches, keeping the
-        # remainder so the long-run rate stays accurate.
-        rate = max(1.0, float(settings.dispatch_hz))
-        self._accumulator += max(0.0, dt)
-        n = int(self._accumulator * rate)
-        if n <= 0:
-            return 0
-        # Drop backlog beyond the cap rather than queueing a burst after a
-        # hitch; catching up on stale time is worse than losing it.
-        if n > MAX_DISPATCHES_PER_FRAME:
-            n = MAX_DISPATCHES_PER_FRAME
+        if audio_on:
+            # The sound device sets the pace, not the wall clock. Produce
+            # exactly as many blocks as the audio ring has room for, bounded
+            # by the free GPU slots. Under-producing is an audible gap, so
+            # this deliberately does not "drop backlog" the way the visual
+            # path does.
             self._accumulator = 0.0
+            n = min(audio_service.blocks_wanted(),
+                    AUDIO_MAX_DISPATCHES_PER_FRAME)
+            if n <= 0:
+                return 0
         else:
-            self._accumulator -= n / rate
+            # Convert elapsed time into a whole number of dispatches, keeping
+            # the remainder so the long-run rate stays accurate.
+            rate = max(1.0, float(settings.dispatch_hz))
+            self._accumulator += max(0.0, dt)
+            n = int(self._accumulator * rate)
+            if n <= 0:
+                return 0
+            # Drop backlog beyond the cap rather than queueing a burst after a
+            # hitch; catching up on stale time is worse than losing it.
+            if n > MAX_DISPATCHES_PER_FRAME:
+                n = MAX_DISPATCHES_PER_FRAME
+                self._accumulator = 0.0
+            else:
+                self._accumulator -= n / rate
 
         steps = int(max(1, min(settings.steps_per_dispatch, MAX_STEPS)))
         groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
@@ -245,18 +264,45 @@ class StreamlineService:
         tryset(self.trace_program, 'SEED_SCATTER', float(settings.seed_scatter))
         tryset(self.trace_program, 'RUN_SALT', self._run_salt(settings))
 
+        tryset(self.trace_program, 'AUDIO_ENABLED', bool(audio_on))
+        if audio_on:
+            audio_service.bind()
+            tryset(self.trace_program, 'AUDIO_VOICE',
+                   int(min(max(audio_settings.voice_index, 0), count - 1)))
+            # With auto-gain the CPU applies amplitude after normalising, so
+            # the shader must not scale as well or the gain would be squared.
+            tryset(self.trace_program, 'AUDIO_AMPLITUDE',
+                   1.0 if audio_settings.auto_gain
+                   else float(audio_settings.amplitude))
+            tryset(self.trace_program, 'AUDIO_HP_COEFF',
+                   audio_service.highpass_coeff(audio_settings))
+            tryset(self.trace_program, 'AUDIO_RAMP_DEC',
+                   audio_service.ramp_decrement(audio_settings))
+
+        issued = 0
         for _ in range(n):
+            if audio_on and not audio_service.can_dispatch():
+                # No free GPU slot: the readback has not caught up yet.
+                break
+            if audio_on:
+                tryset(self.trace_program, 'AUDIO_SLOT_BASE',
+                       audio_service.slot_base)
             # Advances every dispatch so the hazard roll never repeats, even
             # when the launch directions are deliberately frozen.
             tryset(self.trace_program, 'DISPATCH_INDEX',
                    (self._dispatch_count * steps) & 0xFFFFFFFF)
             self.trace_program.run(groups, 1, 1)
             self._dispatch_count += 1
-            # Each dispatch reads the state the previous one wrote. This is
-            # also where an audio tap would fence and read back its block.
-            self.ctx.memory_barrier()
+            issued += 1
+            if audio_on:
+                # Fence this block so the readback can poll it without
+                # stalling the pipeline.
+                audio_service.note_dispatch()
+            else:
+                # Each dispatch reads the state the previous one wrote.
+                self.ctx.memory_barrier()
 
-        return n
+        return issued
 
     # ------------------------------------------------------------------
     # Rendering
