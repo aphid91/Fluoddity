@@ -353,7 +353,11 @@ vec2 get_can_lerp(vec2 p){
     vec2 uv = canvas_uv(p);
     vec2 cur = texture(canvas, uv).rg;
     if(!FIELD_INTERPOLATE) return cur;
-    return mix(texture(canvas_prev, uv).rg, cur, clamp(g_field_alpha, 0.0, 1.0));
+    // fract, not clamp: the phase measures position within one physics
+    // interval and the tracer runs many steps per interval, so it legitimately
+    // passes 1.0 mid-dispatch. Clamping would flatten the blend to the current
+    // frame for the rest of the dispatch instead of continuing the ramp.
+    return mix(texture(canvas_prev, uv).rg, cur, fract(g_field_alpha));
 }
 #endif
 vec4 get_field(vec2 p){

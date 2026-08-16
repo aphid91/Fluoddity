@@ -60,6 +60,7 @@ class StreamlineService:
         self._last_count = 0  # Population size at the last reset
         self._needs_reset = True  # Force a seed before the first dispatch
         self._field_phase = 0.0  # Position between physics steps, 0..1
+        self._last_physics_frame = -1  # sim.frame_count at the last phase reset
         self._interp_valid = False  # Set per dispatch; see _set_trace_uniforms
         self.sim = None  # Set by the orchestrator; supplies the physics uniforms
 
@@ -243,10 +244,17 @@ class StreamlineService:
         many integration steps in between, so each step is placed
         proportionally through that interval.
 
-        The ramp restarts at 0 each dispatch: the two canvas textures only
-        describe the latest physics interval, so there is nothing older to
-        ramp from. Where a dispatch outlasts that interval the shader clamps
-        and holds - see the note in sample_field_lerp.
+        The phase carries across sub-dispatches. Restarting it at 0 each time
+        made the field ramp toward the current frame and then snap back to the
+        previous one at every sub-dispatch boundary - a sawtooth at the
+        sub-dispatch rate. With a 512-sample block that is 750 Hz across the
+        whole 400-600 Hz physics range, which is audible as a fixed tone that
+        does not change with the config. Advancing the phase instead keeps the
+        blend monotonic across the whole physics interval.
+
+        The phase is reset in update() when a new physics step lands, since
+        that is when the two canvas textures genuinely describe a new
+        interval.
         """
         # Interpolation is only meaningful when the whole dispatch lands
         # inside the single physics interval the two canvas textures describe.
@@ -255,7 +263,16 @@ class StreamlineService:
             # The canvas moves at least as fast as the tracer; nothing to
             # interpolate.
             return 1.0, 0.0
-        return 0.0, 1.0 / samples_per_physics_step
+        inc = 1.0 / samples_per_physics_step
+        base = self._field_phase
+        # Wrap rather than clamp: the phase measures position within ONE
+        # physics interval, and the tracer runs several sub-dispatches per
+        # interval. Clamping would pin it at 1.0 and stop interpolating;
+        # restarting it at 0 every sub-dispatch is what caused the 750 Hz
+        # sawtooth. Wrapping keeps the ramp continuous across sub-dispatch
+        # boundaries and resets it only where the canvas genuinely advances.
+        self._field_phase = (base + inc * steps) % 1.0
+        return base, inc
 
     def update(self, canvas_texture: moderngl.Texture,
                seed_world: tuple[float, float], settings, dt: float,
@@ -279,6 +296,15 @@ class StreamlineService:
 
         audio_on = (audio_service is not None and audio_settings is not None
                     and audio_settings.enabled and audio_service.active)
+
+        # The two canvas textures describe the interval ending at the current
+        # physics step, so the blend phase restarts only when that step
+        # changes - not on every sub-dispatch, which would sawtooth.
+        if self.sim is not None:
+            fc = getattr(self.sim, 'frame_count', None)
+            if fc is not None and fc != self._last_physics_frame:
+                self._last_physics_frame = fc
+                self._field_phase = 0.0
 
         count = int(max(1, min(settings.count, MAX_STREAMLINES)))
 
