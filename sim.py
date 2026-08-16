@@ -118,6 +118,10 @@ class Sim:
 
         # 1. Entity update compute shader
         self.entity_update_source = read_shader('shaders/entity_update.glsl')
+        # Physics first, then fourier: shader_prepend inserts after line 1, so
+        # the last prepend ends up outermost. entity_physics.glsl needs
+        # FourierCenter/fourier_noise/hash declared before it.
+        self.entity_update_source = shader_prepend(self.entity_update_source, read_shader('shaders/entity_physics.glsl'))
         self.entity_update_source = shader_prepend(self.entity_update_source, read_shader('shaders/fourier4_4.glsl'))
         self.entity_update_source = prepend_defines(self.entity_update_source, self.entity_count)
 
