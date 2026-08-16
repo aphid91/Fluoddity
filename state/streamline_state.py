@@ -51,6 +51,12 @@ class StreamlineState:
     running: bool = True  # Whether the tracer advances at all
 
     # --- Integration ---
+    # Newtonian mode: the original tracer, which treats the canvas as a force
+    # field and advects the particle along it. Much simpler than the default
+    # read-only Fluoddity particle (two sensors + calculate_entity_behavior),
+    # and traces the flow rather than reproducing particle behaviour. The four
+    # settings below apply only in this mode.
+    newtonian_mode: bool = False
     force_scale: float = 1.0  # Canvas value -> acceleration multiplier
     damping: float = 0.98  # Per-step velocity retention (1.0 = frictionless)
     step_size: float = 0.01  # Velocity -> displacement multiplier per step

@@ -361,6 +361,16 @@ vec2 get_can_lerp(vec2 p){
     // interpolating, which is inaudible by comparison.
     return mix(texture(canvas_prev, uv).rg, cur, clamp(g_field_alpha, 0.0, 1.0));
 }
+// Same blend, but for positions in the plain [-1,1] square rather than the
+// aspect-corrected entity space. The original force-field tracer worked in
+// that space and its tuning (STEP_SIZE, RESTORE_FORCE) is calibrated to it,
+// so Newtonian mode keeps sampling the way it always did.
+vec2 get_can_lerp_square(vec2 p){
+    vec2 uv = p * 0.5 + 0.5;
+    vec2 cur = texture(canvas, uv).rg;
+    if(!FIELD_INTERPOLATE) return cur;
+    return mix(texture(canvas_prev, uv).rg, cur, clamp(g_field_alpha, 0.0, 1.0));
+}
 #endif
 vec4 get_field(vec2 p){
     if(!advanced_drawing_resources_initialized)return vec4(0);

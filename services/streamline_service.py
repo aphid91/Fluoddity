@@ -679,6 +679,14 @@ class StreamlineService:
         tryset(self.trace_program, 'HAZARD_RATE',
                min(max(float(settings.hazard_rate), 0.0), 1.0))
         tryset(self.trace_program, 'SEED_SCATTER', float(settings.seed_scatter))
+        # Newtonian mode and its four settings. Inert unless the mode is on.
+        tryset(self.trace_program, 'NEWTONIAN_MODE',
+               bool(settings.newtonian_mode))
+        tryset(self.trace_program, 'FORCE_SCALE', float(settings.force_scale))
+        tryset(self.trace_program, 'DAMPING', float(settings.damping))
+        tryset(self.trace_program, 'STEP_SIZE', float(settings.step_size))
+        tryset(self.trace_program, 'RESTORE_FORCE',
+               float(settings.restore_force))
         tryset(self.trace_program, 'RUN_SALT', self._run_salt(settings))
 
     def render_audio_samples(self, canvas_texture, seed_world, settings,

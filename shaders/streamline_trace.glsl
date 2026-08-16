@@ -66,6 +66,19 @@ uniform uint DISPATCH_INDEX;        // Decorrelates the hazard roll per dispatch
 uniform float SEED_SCATTER;         // Radius of each particle's own spawn disc
 uniform uint RUN_SALT;              // Reseeds the whole population per reset
 
+// --- Newtonian mode ---
+// When false, streamers are read-only Fluoddity particles: two sensors and
+// calculate_entity_behavior(), exactly as entity_update does. When true they
+// fall back to the original tracer, which treats the canvas as a force field
+// directly - a much simpler advection model that traces the flow rather than
+// reproducing particle behaviour. Kept because it sounds and looks different,
+// not because it is more correct.
+uniform bool NEWTONIAN_MODE;
+uniform float FORCE_SCALE;    // Canvas value -> acceleration
+uniform float DAMPING;        // Per-step velocity retention
+uniform float STEP_SIZE;      // Velocity -> displacement per step
+uniform float RESTORE_FORCE;  // Spring pull back toward the seed
+
 // --- Audio voices ---
 uniform bool AUDIO_ENABLED;
 uniform int AUDIO_VOICE_COUNT;      // Particles 0..N-1 each drive one voice
@@ -224,6 +237,80 @@ void main() {
         // current one. Read by get_can_lerp() inside the shared physics.
         g_field_alpha = FIELD_ALPHA_BASE + FIELD_ALPHA_STEP * float(k);
 
+        float raw_power;
+
+        if (NEWTONIAN_MODE) {
+            // --- Original tracer: canvas as a force field ---
+            // Advects the particle along the flow instead of evaluating the
+            // rule. Lives in the [-1,1] square, not the aspect-corrected
+            // entity space the Fluoddity path uses, so it has its own
+            // sampling and boundary handling below.
+            vec2 fld = get_can_lerp_square(pos);
+            vel += fld * FORCE_SCALE;
+
+            // Spring toward the seed, applied after the field so its own
+            // damping is not scaled by FORCE_SCALE.
+            //
+            // Semi-implicit and normalised by STEP_SIZE: what matters for
+            // stability is the displacement per step, k * STEP_SIZE. Clamping
+            // that product keeps a dragged seed pulling the swarm along
+            // instead of catapulting it.
+            if (RESTORE_FORCE > 0.0) {
+                // ks is the fraction of the gap closed per step. The damping
+                // factor hits zero at ks = 0.25 and the swarm slingshots past
+                // that; measured stable to ~0.20, so cap at 0.15 for margin.
+                float ks = min(STEP_SIZE * STEP_SIZE * RESTORE_FORCE, 0.15);
+                // Each particle pulls toward its own offset target, so a
+                // stiff spring gathers a cloud rather than collapsing every
+                // particle onto one identical fixed point.
+                vec2 target = seed_pos + seed_offset(line_id);
+                vel += (target - pos) * (ks / max(STEP_SIZE, 1e-6));
+                vel *= max(0.0, 1.0 - min(2.0 * sqrt(ks), 1.0));
+            }
+
+            vel *= DAMPING;
+            raw_power = dot(vel, fld);
+            pos += vel * STEP_SIZE;
+
+            // Square-space bounds, matching the original.
+            if (any(lessThan(pos, vec2(-1.0)))
+                || any(greaterThan(pos, vec2(1.0)))) {
+                if (STOP_AT_EDGE) {
+                    alive = 0u;
+                    // Pad the rest of the block so it stays exactly
+                    // STEPS_PER_DISPATCH samples long; a short block would
+                    // desynchronise the audio stream.
+                    if (is_voice) {
+                        for (int j = k; j < STEPS_PER_DISPATCH; ++j) {
+                            hp_y1 *= AUDIO_HP_COEFF;
+                            audio_samples[lane + j] = hp_y1;
+                        }
+                    }
+                    break;
+                }
+                // Wrap. Clamping would park the particle against the boundary
+                // with the field pushing it outward forever, collapsing its
+                // whole tail onto one point.
+                pos = fract((pos + 1.0) * 0.5) * 2.0 - 1.0;
+            }
+
+            path[base + int(write_index % uint(RING_CAPACITY))] = pos;
+            write_index += 1u;
+
+            if (is_voice) {
+                float raw = raw_power * AUDIO_AMPLITUDE;
+                float y = AUDIO_HP_COEFF * (hp_y1 + raw - hp_x1);
+                hp_x1 = raw;
+                hp_y1 = y;
+                if (ramp > 0.0) {
+                    y *= (1.0 - ramp);
+                    ramp = max(0.0, ramp - AUDIO_RAMP_DEC);
+                }
+                audio_samples[lane + k] = y;
+            }
+            continue;
+        }
+
         // --- Full Fluoddity particle step, matching entity_update ---
         // Sensor geometry.
         float sample_dist = 1./SQRT_WORLD_SIZE*.005
@@ -266,7 +353,7 @@ void main() {
         //
         // To try the post-integration variant instead, comment this line out
         // and uncomment the one marked POST-INTEGRATION below, then press V.
-        float raw_power = dot(force, vel)*1.;
+        raw_power = dot(force, vel)*1.;//dot(force.yx*vec2(-1,1), vel)*100.;
 
         // Integrate exactly as a real particle does: velocity IS the step,
         // there is no separate step scale.

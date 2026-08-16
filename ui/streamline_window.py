@@ -106,11 +106,61 @@ class StreamlineWindowMixin:
 
             # === Integration ===
             imgui.text("Physics")
-            imgui.text_wrapped(
-                "Streamers are read-only Fluoddity particles: they evaluate "
-                "the same rules and physics sliders real particles do, but "
-                "leave no trail. Their behaviour comes from the Physics "
-                "window, not from here.")
+            _, s.newtonian_mode = imgui.checkbox(
+                "Newtonian Mode", s.newtonian_mode
+            )
+            self._delayed_tooltip(
+                "Trace the canvas as a force field instead of running the\n"
+                "full Fluoddity particle.\n\n"
+                "Off (default): streamers are read-only Fluoddity particles.\n"
+                "They read two sensors and evaluate the same rule real\n"
+                "particles do, but leave no trail, so they show what the\n"
+                "simulation's own particles would do.\n\n"
+                "On: the original tracer. The canvas value is applied\n"
+                "directly as acceleration, so the particle advects along the\n"
+                "flow. Simpler, and it traces the field rather than\n"
+                "reproducing behaviour - a different look and sound, not a\n"
+                "more accurate one.")
+
+            if s.newtonian_mode:
+                _, s.force_scale = imgui.slider_float(
+                    "Force Scale", s.force_scale, 0.0, 5.0, format="%.3f"
+                )
+                self._delayed_tooltip(
+                    "Canvas value to acceleration. Higher follows the field\n"
+                    "more sharply.")
+
+                _, s.damping = imgui.slider_float(
+                    "Damping", s.damping, 0.5, 1.0, format="%.5f"
+                )
+                self._delayed_tooltip(
+                    "Velocity retained per step. 1.0 is frictionless, so the\n"
+                    "particle keeps its momentum and overshoots the flow.\n"
+                    "Useful values sit very close to 1.")
+
+                # Lower bound is well below the saved values from when this
+                # was the only mode (0.0004 is typical), so loading an old
+                # preferences file does not silently clamp them.
+                _, s.step_size = imgui.slider_float(
+                    "Step Size", s.step_size, 0.0001, 0.1, format="%.5f"
+                )
+                self._delayed_tooltip(
+                    "Velocity to displacement per integration step.")
+
+                _, s.restore_force = imgui.slider_float(
+                    "Restore Force", s.restore_force, 0.0, 2000.0, format="%.0f"
+                )
+                self._delayed_tooltip(
+                    "Spring pulling each particle back toward its own offset\n"
+                    "point near the seed. 0 lets them drift free. Scaled by\n"
+                    "Step Size internally and clamped for stability, so the\n"
+                    "useful range is large.")
+            else:
+                imgui.text_wrapped(
+                    "Streamers are read-only Fluoddity particles: they "
+                    "evaluate the same rules and physics sliders real "
+                    "particles do, but leave no trail. Their behaviour comes "
+                    "from the Physics window, not from here.")
 
             imgui.separator()
 
