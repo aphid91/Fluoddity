@@ -19,8 +19,9 @@ class StreamlineWindowMixin:
             s = self.state.streamline
 
             imgui.text_wrapped(
-                "Persistent particles carried by the canvas force field. "
-                "They keep streaming until reset."
+                "Read-only Fluoddity particles. They sense and move by the "
+                "same rules as real particles but leave no trail, so they "
+                "observe the simulation without changing it."
             )
 
             # === Transport ===
@@ -88,43 +89,15 @@ class StreamlineWindowMixin:
             imgui.separator()
 
             # === Integration ===
-            imgui.text("Integration")
-            _, s.force_scale = imgui.slider_float(
-                "Force Scale", s.force_scale, 0.0, 20.0, format="%.3f"
-            )
-            self._delayed_tooltip(
-                "Converts canvas values into acceleration.\n"
-                "Raise this if the particles barely move."
-            )
+            imgui.text("Physics")
+            imgui.text_wrapped(
+                "Streamers are read-only Fluoddity particles: they evaluate "
+                "the same rules and physics sliders real particles do, but "
+                "leave no trail. Their behaviour comes from the Physics "
+                "window, not from here.")
 
-            _, s.damping = imgui.slider_float(
-                "Damping", s.damping, 0.5, 1.0, format="%.4f"
-            )
-            self._delayed_tooltip(
-                "Velocity retained each step.\n"
-                "1.0 is frictionless; lower values settle the path\n"
-                "into the field direction more tightly."
-            )
 
-            _, s.step_size = imgui.slider_float(
-                "Step Size", s.step_size, 0.0001, 0.1, format="%.4f"
-            )
-            self._delayed_tooltip(
-                "Distance travelled per step.\n"
-                "Lower values trace a smoother, shorter path."
-            )
 
-            _, s.restore_force = imgui.slider_float(
-                "Restore Force", s.restore_force, 0.0, 10000.0, format="%.1f",
-                flags=imgui.SliderFlags_.logarithmic
-            )
-            self._delayed_tooltip(
-                "Spring force pulling particles back toward the seed.\n"
-                "Raise it and the population gathers at the cursor, so you\n"
-                "can drag the swarm around the canvas.\n"
-                "Scaled by Step Size in the shader, so it needs large values\n"
-                "to bite - log scale. Lowering Step Size raises what you need."
-            )
 
             imgui.separator()
 
@@ -147,13 +120,10 @@ class StreamlineWindowMixin:
                 "Seed Scatter", s.seed_scatter, 0.0, 1.0, format="%.3f"
             )
             self._delayed_tooltip(
-                "Radius of each particle's own spring target around the seed.\n"
-                "The spring is a point attractor, so at 0 a strong Restore\n"
-                "Force pulls the whole population onto one identical point.\n"
-                "Raise this to gather them into a cloud instead."
+                "Radius of the disc each particle spawns into around the\n"
+                "seed. At 0 they all start from the same point and, running\n"
+                "identical rules, trace near-identical paths."
             )
-            if s.restore_force > 0.0 and s.seed_scatter <= 0.0:
-                imgui.text_disabled("  population will collapse to one point")
 
             _, s.resample_each_frame = imgui.checkbox(
                 "Resample Launch Directions", s.resample_each_frame

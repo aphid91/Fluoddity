@@ -24,9 +24,16 @@ struct Entity {
 struct Rule {
     FourierCenter centers[10];
 };
+// The streamline tracer is a read-only consumer of this physics: it never
+// touches the entity buffer, so it defines STREAMLINE_READONLY to skip the
+// declaration entirely rather than binding a buffer it must not write.
+#ifndef STREAMLINE_READONLY
 layout(std430, binding = 0) buffer EntityBuffer {
     Entity entities[];
 };
+#endif
+// Not marked readonly: entity_update writes rules[] back when WRITE_RULES is
+// set for rule readback. The tracer simply never writes it.
 layout(std430, binding = 2) buffer RuleBuffer {
     Rule rules[];
 };
@@ -324,14 +331,31 @@ void pR(inout vec2 p, float a) {
 
 
 //convert p (entity space) to texture coords and retrieve canvas (RG32F: velocity only)
-vec2 get_can(vec2 p){
+vec2 canvas_uv(vec2 p){
     vec2 res=textureSize(canvas,0);
     float ca = res.x / res.y;
     vec2 half_extent = vec2(sqrt(ca), 1.0 / sqrt(ca));
     vec2 uv = p / (2.0 * half_extent) + 0.5;
     if(get_particle_boundary_conditions() == 2) uv = fract(uv);
-    return texture(canvas, uv).rg;
+    return uv;
 }
+vec2 get_can(vec2 p){
+    return texture(canvas, canvas_uv(p)).rg;
+}
+#ifdef STREAMLINE_READONLY
+// The tracer runs many steps between canvas updates, so it samples a blend of
+// the previous and current frame instead of a piecewise-constant field. See
+// the note in streamline_trace.glsl.
+uniform sampler2D canvas_prev;
+uniform bool FIELD_INTERPOLATE;
+float g_field_alpha = 1.0;   // Set per step by the tracer's main loop.
+vec2 get_can_lerp(vec2 p){
+    vec2 uv = canvas_uv(p);
+    vec2 cur = texture(canvas, uv).rg;
+    if(!FIELD_INTERPOLATE) return cur;
+    return mix(texture(canvas_prev, uv).rg, cur, clamp(g_field_alpha, 0.0, 1.0));
+}
+#endif
 vec4 get_field(vec2 p){
     if(!advanced_drawing_resources_initialized)return vec4(0);
     vec2 res=textureSize(field_texture,0);
@@ -391,7 +415,9 @@ void reset(uint index){
 
     
     //store to persistent entity buffer
+#ifndef STREAMLINE_READONLY
     entities[index]=Entity(pos,vel, 0.50, size, float[2](0,0));
+#endif
 }
 
 //randomly change noise function parameters, scaled by parameter amount. 

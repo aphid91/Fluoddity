@@ -47,32 +47,23 @@ layout(std430, binding = 7) buffer StreamlineAudio {
     float audio_samples[];
 };
 
-uniform sampler2D canvas_texture;
-// The canvas as it was at the previous physics step. The canvas only updates
-// every physics step, which is dozens to hundreds of audio samples apart, so
-// sampling it directly makes the field piecewise constant and the audio
-// staircases audibly. Blending toward the current frame across the samples
-// between steps removes that.
-uniform sampler2D canvas_prev_texture;
-uniform bool FIELD_INTERPOLATE;
+// The canvas samplers, the physics uniforms and get_can_lerp() all come from
+// entity_physics.glsl, spliced in ahead of this file. Streamers evaluate the
+// same behaviour as real particles rather than a simplified force model, so
+// they must not redeclare any of it.
 uniform float FIELD_ALPHA_BASE;   // Blend fraction at the start of this block
 uniform float FIELD_ALPHA_STEP;   // Added per integration step
 
-uniform vec2 seed_pos;              // Cursor / pinned seed, world space [-1, 1]
+uniform vec2 seed_pos;              // Cursor / pinned seed, entity space
 uniform int STEPS_PER_DISPATCH;     // Integration steps to advance this call
 uniform int RING_CAPACITY;          // Ring slots per particle
 uniform int STREAMLINE_COUNT;       // Active particles
-uniform float FORCE_SCALE;
-uniform float DAMPING;
-uniform float STEP_SIZE;
-uniform float RESTORE_FORCE;
 uniform float INITIAL_SPEED;
-uniform float RANDOM_SEED;
 uniform bool RESPAWN_AT_SEED;       // Retired particles restart at the seed
 uniform bool STOP_AT_EDGE;          // Retire on leaving the canvas
 uniform float HAZARD_RATE;          // Per-step chance a particle resets to seed
 uniform uint DISPATCH_INDEX;        // Decorrelates the hazard roll per dispatch
-uniform float SEED_SCATTER;         // Radius of each particle's own spring target
+uniform float SEED_SCATTER;         // Radius of each particle's own spawn disc
 uniform uint RUN_SALT;              // Reseeds the whole population per reset
 
 // --- Audio voices ---
@@ -83,34 +74,6 @@ uniform int AUDIO_SLOT_BASE;        // Start index of this block within a lane
 uniform float AUDIO_AMPLITUDE;
 uniform float AUDIO_HP_COEFF;       // One-pole high-pass coefficient
 uniform float AUDIO_RAMP_DEC;       // Per-sample decrement of the reset ramp
-
-vec2 sample_field(vec2 world_pos) {
-    return texture(canvas_texture, world_pos * 0.5 + 0.5).xy;
-}
-
-// Field at a point in time between the previous physics step and the current
-// one. alpha 0 = previous frame, 1 = current.
-//
-// The two textures only ever describe the most recent physics interval, so
-// alpha is clamped rather than wrapped. A dispatch that outruns that interval
-// holds at the current frame instead of replaying the same prev->cur sweep,
-// which would be a sawtooth - a different artifact rather than a fix. Keeping
-// the block short enough to sit inside one physics step is what makes the
-// interpolation cover the whole block (see AUDIO_MAX_STEPS_PER_PHYSICS).
-vec2 sample_field_lerp(vec2 world_pos, float alpha) {
-    vec2 uv = world_pos * 0.5 + 0.5;
-    vec2 cur = texture(canvas_texture, uv).xy;
-    if (!FIELD_INTERPOLATE) {
-        return cur;
-    }
-    vec2 prev = texture(canvas_prev_texture, uv).xy;
-    return mix(prev, cur, clamp(alpha, 0.0, 1.0));
-}
-
-bool out_of_bounds(vec2 world_pos) {
-    return any(lessThan(world_pos, vec2(-1.0))) ||
-           any(greaterThan(world_pos, vec2(1.0)));
-}
 
 float hash11(float p) {
     p = fract(p * 0.1031);
@@ -172,6 +135,32 @@ void main() {
 
     int base = line_id * RING_CAPACITY;
 
+    // --- Hoisted once per invocation ---
+    // The step loop runs up to 512 times and calls calculate_setting ~7 times
+    // per step. The PhysicsSettings are uniforms (cheap, and the driver would
+    // likely hoist them anyway), but current_rule is 10 FourierCenters read
+    // from an SSBO - that one is worth pulling into registers explicitly
+    // rather than trusting the optimiser to prove it loop-invariant.
+    //
+    // Every streamer is cohort 0 for now, which also makes the cohort_sweep
+    // and mutation terms constant across the population.
+    const float COHORT = 0.0;
+    Rule current_rule = get_particle_target_rule();
+    if (current_rule.centers[0].frequency == vec4(0)
+        && current_rule.centers[5].amplitude == vec4(0)) {
+        current_rule = Rule(generate_random_centers(get_particle_rule_seed()));
+    }
+    mutate_rule(current_rule,
+                calculate_setting(get_particle_mutation_scale(), vec2(0), COHORT),
+                get_particle_rule_seed());
+
+    PhysicsSetting sensor_distance   = get_particle_sensor_distance();
+    PhysicsSetting sensor_angle      = get_particle_sensor_angle();
+    PhysicsSetting sensor_gain       = get_particle_sensor_gain();
+    PhysicsSetting global_force_mult = get_particle_global_force_mult();
+    PhysicsSetting drag              = get_particle_drag();
+    PhysicsSetting strafe_power      = get_particle_strafe_power();
+
     vec2 pos = particles[line_id].pos;
     vec2 vel = particles[line_id].vel;
     uint write_index = particles[line_id].write_index;
@@ -232,39 +221,87 @@ void main() {
         }
 
         // Where this step sits between the previous physics frame and the
-        // current one.
-        float field_alpha = FIELD_ALPHA_BASE + FIELD_ALPHA_STEP * float(k);
-        vec2 force = sample_field_lerp(pos, field_alpha);
-        vel += force * FORCE_SCALE;
+        // current one. Read by get_can_lerp() inside the shared physics.
+        g_field_alpha = FIELD_ALPHA_BASE + FIELD_ALPHA_STEP * float(k);
 
-        // Spring toward the seed, applied after the field so its own damping
-        // is not scaled by FORCE_SCALE.
+        // --- Full Fluoddity particle step, matching entity_update ---
+        // Sensor geometry.
+        float sample_dist = 1./SQRT_WORLD_SIZE*.005
+                          * calculate_setting(sensor_distance, pos, COHORT);
+        int orient_mode = get_particle_absolute_orientation();
+        float mix_amt = min(1, orient_mode) * ORIENTATION_MIX;
+        vec2 orientation = safenorm(vel);
+        if (orient_mode == 1) { orientation = mix(orientation, vec2(0,1), mix_amt); }
+        else if (orient_mode == 2) { orientation = mix(orientation, -normalize(pos), mix_amt); }
+        vec2 left_off = orientation * sample_dist;
+        vec2 right_off = orientation * sample_dist;
+        float sensor_a = calculate_setting(sensor_angle, pos, COHORT) * PI;
+        pR(left_off, sensor_a);
+        pR(right_off, -sensor_a);
+
+        // Sensor taps. get_can_lerp blends the previous and current canvas so
+        // the field is not piecewise constant across a block of audio samples.
+        vec2 ltap = get_can_lerp(pos + left_off);
+        vec2 rtap = get_can_lerp(pos + right_off);
+        float sensor_scaling = SQRT_WORLD_SIZE * 38.855
+                             * calculate_setting(sensor_gain, pos, COHORT);
+        ltap *= sensor_scaling;
+        rtap *= sensor_scaling;
+
+        vec2 force = vec2(0);
+        vec2 strafe = vec2(0);
+        vec2 col_params = vec2(0);
+        calculate_entity_behavior(ltap, rtap, orientation, current_rule,
+                                  pos, COHORT, force, strafe, col_params);
+
+        float gfm = calculate_setting(global_force_mult, pos, COHORT);
+        force  *= 1./SQRT_WORLD_SIZE * gfm / 400.;
+        strafe *= 1./SQRT_WORLD_SIZE * gfm / 20.;
+
+        // --- Audio sample: instantaneous power ---
+        // Taken here, on the force just computed and the velocity it acts on,
+        // before drag and the position update. That is the physical work rate
+        // at this instant.
         //
-        // Semi-implicit and normalised by STEP_SIZE: what matters for
-        // stability is the displacement the spring produces per step, which
-        // is k * STEP_SIZE. Clamping that product to < 1 keeps a dragged seed
-        // pulling the swarm along instead of catapulting it - an unclamped
-        // stiff spring turns any seed jump into a huge velocity impulse.
-        if (RESTORE_FORCE > 0.0) {
-            // ks is the fraction of the gap closed per step. The damping
-            // factor below hits zero at ks = 0.25, and past that the swarm
-            // slingshots to the canvas corners; measured stable up to ~0.20,
-            // so cap at 0.15 for margin and let the slider saturate there.
-            float ks = min(STEP_SIZE * STEP_SIZE * RESTORE_FORCE, 0.15);
-            // Each particle pulls toward its own offset target, so a stiff
-            // spring gathers the population into a cloud rather than
-            // collapsing every particle onto one identical fixed point.
-            vec2 target = seed_pos + seed_offset(line_id);
-            vel += (target - pos) * (ks / max(STEP_SIZE, 1e-6));
-            // Critical damping for this discrete step.
-            vel *= max(0.0, 1.0 - min(2.0 * sqrt(ks), 1.0));
-        }
+        // To try the post-integration variant instead, comment this line out
+        // and uncomment the one marked POST-INTEGRATION below, then press V.
+        float raw_power = dot(force, vel);
 
-        vel *= DAMPING;
-        //vel += .01*(vec2(-.5+hash11((k+line_id-particles[line_id].write_index)*.007123),hash11((-k+line_id-particles[line_id].write_index)*.06572)));
-        pos += vel * STEP_SIZE;
+        // Integrate exactly as a real particle does: velocity IS the step,
+        // there is no separate step scale.
+        vel = vel * calculate_setting(drag, pos, COHORT) + force;
+        pos += vel;
+        pos += strafe * calculate_setting(strafe_power, pos, COHORT);
 
-        if (out_of_bounds(pos)) {
+        // POST-INTEGRATION variant: uses the velocity after drag and the
+        // force have been applied. Closer to dot(force, force).
+        //float raw_power = dot(force, vel);
+
+        // Advanced-drawing force/strafe field, same as entity_update.
+        vec4 draw_sample = get_field(pos);
+        vel += .01 * force_field_strength * draw_sample.xy;
+        pos += .01 * strafe_field_strength * draw_sample.zw;
+
+        // Boundary handling. Streamers use the simulation's own boundary mode
+        // so they stay inside the same region real particles do.
+        float ca_b = canvas_resolution.x / canvas_resolution.y;
+        vec2 edge = vec2(sqrt(ca_b), 1.0 / sqrt(ca_b));
+        int bmode = get_particle_boundary_conditions();
+        if (bmode == 0) {
+            if (pos.x < -edge.x || pos.x > edge.x) {
+                vel.x = -vel.x;
+                pos.x = edgeflect(pos.x / edge.x) * edge.x;
+            }
+            if (pos.y < -edge.y || pos.y > edge.y) {
+                vel.y = -vel.y;
+                pos.y = edgeflect(pos.y / edge.y) * edge.y;
+            }
+        } else if (bmode == 2) {
+            // Wrap. The draw pass breaks the line strip at the resulting jump.
+            pos = fract((pos + edge) / (2.0 * edge)) * 2.0 * edge - edge;
+        } else if (any(greaterThan(abs(pos), edge))) {
+            // Reset mode: a streamer that leaves is retired or respawned,
+            // rather than jumping to the simulation's reset layout.
             if (STOP_AT_EDGE) {
                 alive = 0u;
                 // Pad the rest of the block so it stays exactly
@@ -278,12 +315,7 @@ void main() {
                 }
                 break;
             }
-            // Otherwise wrap to the opposite edge and keep going. Clamping
-            // instead would park the particle against the boundary with the
-            // field pushing it outward forever, collapsing its whole tail
-            // onto one point. The draw pass detects the resulting position
-            // jump and breaks the line strip there.
-            pos = fract((pos + 1.0) * 0.5) * 2.0 - 1.0;
+            pos = clamp(pos, -edge, edge);
         }
 
         path[base + int(write_index % uint(RING_CAPACITY))] = pos;
@@ -291,13 +323,7 @@ void main() {
 
         // --- Audio sample for this integration step ---
         if (is_voice) {
-            // Project the particle's motion onto the field it is moving
-            // through: large when it is being driven hard, near zero when it
-            // drifts across a null.
-            // Same interpolated field the step used, so the sample and the
-            // motion that produced it agree.
-            float raw = dot(vel, sample_field_lerp(pos, field_alpha))
-                      * AUDIO_AMPLITUDE;
+            float raw = raw_power * AUDIO_AMPLITUDE;
 
             // One-pole high pass (DC blocker). Carrying x1/y1 across a reset
             // turns the position discontinuity into a decaying step rather

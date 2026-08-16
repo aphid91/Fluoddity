@@ -87,6 +87,9 @@ class App:
         self.ui.multi_load_service = self.multi_load_service
         self.ui.advanced_drawing_processor = self.advanced_drawing_processor
         self.ui.streamline_service = self.streamline_service
+        # The tracer evaluates the shared particle physics, so it needs Sim to
+        # push the same uniform values entity_update uses.
+        self.streamline_service.sim = self.sim
 
         # Physics configs directories
         self.app_configs_dir = get_app_physics_configs_dir()
@@ -347,7 +350,13 @@ class App:
             tex_x, tex_y = self.camera.screen_to_tex(
                 ui_state.mouse_pos, tex_size=self.sim.can.size
             )
-            cursor_seed = (tex_x * 2.0 - 1.0, tex_y * 2.0 - 1.0)
+            # Streamers live in the simulation's aspect-corrected space
+            # (+/- sqrt(ca), 1/sqrt(ca)), not a [-1,1] square, so they read
+            # the same sensor geometry real particles do.
+            _cw, _ch = self.sim.can.size
+            _ca = _cw / _ch
+            _hx, _hy = _ca ** 0.5, 1.0 / _ca ** 0.5
+            cursor_seed = ((tex_x * 2.0 - 1.0) * _hx, (tex_y * 2.0 - 1.0) * _hy)
 
             # Middle-click pins the seed in place (and unpins it again), so the
             # streamlines stay put while the field evolves under them.

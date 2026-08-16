@@ -14,7 +14,7 @@ emit one block per dispatch at a rate the audio device dictates.
 """
 import moderngl
 import numpy as np
-from utilities.gl_helpers import read_shader, tryset
+from utilities.gl_helpers import read_shader, tryset, shader_prepend
 from state.streamline_state import (
     MAX_STEPS, MAX_STREAMLINES, MAX_DISPATCHES_PER_FRAME,
     AUDIO_MAX_DISPATCHES_PER_FRAME,
@@ -61,6 +61,7 @@ class StreamlineService:
         self._needs_reset = True  # Force a seed before the first dispatch
         self._field_phase = 0.0  # Position between physics steps, 0..1
         self._interp_valid = False  # Set per dispatch; see _set_trace_uniforms
+        self.sim = None  # Set by the orchestrator; supplies the physics uniforms
 
         self._max_line_width = self._query_max_line_width()
         self._compile()
@@ -88,6 +89,25 @@ class StreamlineService:
     def max_line_width(self) -> float:
         return self._max_line_width
 
+    def _trace_source(self) -> str:
+        """Assemble the tracer with the shared particle physics spliced in.
+
+        Same idiom sim.py uses for entity_update: shader_prepend inserts after
+        line 1, so the last prepend ends up outermost. Order is therefore
+        physics, then fourier, then the defines - fourier must be declared
+        before the physics that uses it, and both need ENTITY_COUNT and
+        STREAMLINE_READONLY visible.
+        """
+        src = read_shader('shaders/streamline_trace.glsl')
+        src = shader_prepend(src, read_shader('shaders/entity_physics.glsl'))
+        src = shader_prepend(src, read_shader('shaders/fourier4_4.glsl'))
+        # STREAMLINE_READONLY makes entity_physics skip the entity buffer
+        # declaration and expose get_can_lerp(); ENTITY_COUNT is referenced by
+        # the shared code even though streamers never index entities.
+        src = shader_prepend(
+            src, '#define STREAMLINE_READONLY 1\n#define ENTITY_COUNT 1\n')
+        return src
+
     def _compile(self) -> bool:
         """Compile all three programs. Returns True if every one succeeded.
 
@@ -95,7 +115,7 @@ class StreamlineService:
         typo during live shader editing does not take the overlay down.
         """
         try:
-            trace = self.ctx.compute_shader(read_shader('shaders/streamline_trace.glsl'))
+            trace = self.ctx.compute_shader(self._trace_source())
         except Exception as e:
             print('Streamline trace shader compilation failed:')
             print(e)
@@ -384,30 +404,33 @@ class StreamlineService:
         separating them once already cost a bug where the realtime path
         sampled whatever happened to be in unit 0.
         """
-        canvas_texture.use(location=0)
-        tryset(self.trace_program, 'canvas_texture', 0)
+        # Unit 1 is the canvas the shared physics reads (get_can); unit 2 is
+        # the previous frame it interpolates from. Unit 5 is the field texture.
+        canvas_texture.use(location=1)
+        tryset(self.trace_program, 'canvas', 1)
         # Previous physics frame, for interpolating the field between steps.
         #
         # Only valid while a dispatch fits inside one physics interval: the
         # two textures describe just the latest interval, so a longer dispatch
         # would spend most of its samples clamped at the current frame with a
         # discontinuity at the clamp. Measured, that is worse than the
-        # staircase it replaces (-30% to -73% at speedmult 2..5, vs +26%
-        # improvement at speedmult 1), so it is gated rather than always on.
+        # staircase it replaces, so it is gated rather than always on.
         interp = (prev_texture is not None
                   and prev_texture is not canvas_texture
                   and self._interp_valid)
-        (prev_texture if interp else canvas_texture).use(location=1)
-        tryset(self.trace_program, 'canvas_prev_texture', 1)
+        (prev_texture if interp else canvas_texture).use(location=2)
+        tryset(self.trace_program, 'canvas_prev', 2)
         tryset(self.trace_program, 'FIELD_INTERPOLATE', bool(interp))
+        # The shared physics needs the same uniform values entity_update
+        # gets. Sim owns that list, so it pushes them rather than this
+        # service duplicating it.
+        if self.sim is not None:
+            self.sim.apply_physics_uniforms_to(self.trace_program,
+                                               canvas_texture_unit=1)
         tryset(self.trace_program, 'seed_pos', tuple(seed_world))
         tryset(self.trace_program, 'STEPS_PER_DISPATCH', steps)
         tryset(self.trace_program, 'RING_CAPACITY', MAX_STEPS)
         tryset(self.trace_program, 'STREAMLINE_COUNT', count)
-        tryset(self.trace_program, 'FORCE_SCALE', float(settings.force_scale))
-        tryset(self.trace_program, 'DAMPING', float(settings.damping))
-        tryset(self.trace_program, 'STEP_SIZE', float(settings.step_size))
-        tryset(self.trace_program, 'RESTORE_FORCE', float(settings.restore_force))
         tryset(self.trace_program, 'INITIAL_SPEED', float(settings.initial_speed))
         tryset(self.trace_program, 'STOP_AT_EDGE', bool(settings.stop_at_edge))
         tryset(self.trace_program, 'RESPAWN_AT_SEED', bool(settings.respawn_at_seed))
@@ -506,8 +529,10 @@ class StreamlineService:
         # off the integrator's own step so a large Step Size does not start
         # shredding legitimate segments; floored so a tiny step still leaves
         # room for the fastest particles.
-        tryset(self.draw_program, 'JUMP_THRESHOLD',
-               max(0.15, float(settings.step_size) * 25.0))
+        # A real particle step is tiny compared with the canvas, so anything
+        # approaching a quarter of the extent is a teleport (boundary wrap or
+        # a hazard respawn), not motion.
+        tryset(self.draw_program, 'JUMP_THRESHOLD', 0.5)
         tryset(self.draw_program, 'line_color', tuple(settings.color))
         tryset(self.draw_program, 'line_opacity', float(settings.opacity))
 

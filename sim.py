@@ -522,24 +522,66 @@ class Sim:
         # Average the results to keep within min/max range
         return result / active_sweeps if active_sweeps > 0 else slider_value
 
-    def _assign_physics_setting(self, uniform_name: str, slider_value: float, slider_label: str, param_name: str, default_min: float, default_max: float):
+    def apply_physics_uniforms_to(self, program, canvas_texture_unit=1,
+                                  field_texture_unit=5):
+        """Push the shared particle physics uniforms into another program.
+
+        The streamline tracer evaluates entity_physics.glsl, so it needs the
+        same uniform values entity_update gets. Reuses this class's parameter
+        list rather than duplicating it, so a parameter added here reaches the
+        tracer automatically.
+        """
+        tryset(program, 'WORLD_SIZE', self.world_size)
+        tryset(program, 'canvas_resolution', self.get_canvas_dimensions())
+        tryset(program, 'canvas', canvas_texture_unit)
+        tryset(program, 'field_texture', field_texture_unit)
+        tryset(program, 'frame_count', self.frame_count)
+        tryset(program, 'WRITE_RULES', False)
+
+        self._assign_physics_setting('AXIAL_FORCE_SETTING', self._state.AXIAL_FORCE, 'Axial Force', 'AXIAL_FORCE', -1.0, 1.0, program)
+        self._assign_physics_setting('LATERAL_FORCE_SETTING', self._state.LATERAL_FORCE, 'Lateral Force', 'LATERAL_FORCE', -1.0, 1.0, program)
+        self._assign_physics_setting('SENSOR_GAIN_SETTING', self._state.SENSOR_GAIN, 'Sensor Gain', 'SENSOR_GAIN', 0.0, 5.0, program)
+        self._assign_physics_setting('MUTATION_SCALE_SETTING', self._state.MUTATION_SCALE, 'Mutation Scale', 'MUTATION_SCALE', -0.5, 0.5, program)
+        self._assign_physics_setting('DRAG_SETTING', self._state.DRAG, 'Drag', 'DRAG', -1.0, 1.0, program)
+        self._assign_physics_setting('STRAFE_POWER_SETTING', self._state.STRAFE_POWER, 'Strafe Power', 'STRAFE_POWER', 0.0, 0.5, program)
+        self._assign_physics_setting('SENSOR_ANGLE_SETTING', self._state.SENSOR_ANGLE, 'Sensor Angle', 'SENSOR_ANGLE', -1.0, 1.0, program)
+        self._assign_physics_setting('GLOBAL_FORCE_MULT_SETTING', self._state.GLOBAL_FORCE_MULT, 'Global Force Mult', 'GLOBAL_FORCE_MULT', 0.0, 2.0, program)
+        self._assign_physics_setting('SENSOR_DISTANCE_SETTING', self._state.SENSOR_DISTANCE, 'Sensor Distance', 'SENSOR_DISTANCE', 0.0, 4.0, program)
+        self._assign_physics_setting('HAZARD_RATE_SETTING', self._state.HAZARD_RATE, 'Hazard Rate', 'HAZARD_RATE', 0.0, 0.05, program)
+
+        tryset(program, 'DISABLE_SYMMETRY', self._state.DISABLE_SYMMETRY)
+        tryset(program, 'ABSOLUTE_ORIENTATION', self._state.ABSOLUTE_ORIENTATION)
+        tryset(program, 'ORIENTATION_MIX', self._state.ORIENTATION_MIX)
+        tryset(program, 'RULE_SEED', self._state.rule_seed)
+        tryset(program, 'BOUNDARY_CONDITIONS_MODE', self._state.boundary_conditions)
+        tryset(program, 'RESET_MODE', self._state.initial_conditions)
+        tryset(program, 'COHORTS', self._state.num_cohorts)
+        tryset(program, 'HUE_SENSITIVITY', self._state.hue_sensitivity)
+        tryset(program, 'COLOR_BY_COHORT', self._state.color_by_cohort)
+        # Streamers are read-only observers; multi-load overrides are out of
+        # scope for now, so they always take the global parameter path.
+        tryset(program, 'MULTILOAD_COUNT', 0)
+
+    def _assign_physics_setting(self, uniform_name: str, slider_value: float, slider_label: str, param_name: str, default_min: float, default_max: float, program=None):
         """Assign a PhysicsSetting struct uniform with dynamically fetched min/max ranges, sweep states, and jitter."""
         min_val, max_val = self._get_slider_range(slider_label, default_min, default_max)
+        if program is None:
+            program = self.entity_update_program
 
-        tryset(self.entity_update_program, f'{uniform_name}.slider_value', slider_value)
-        tryset(self.entity_update_program, f'{uniform_name}.min_value', min_val)
-        tryset(self.entity_update_program, f'{uniform_name}.max_value', max_val)
+        tryset(program, f'{uniform_name}.slider_value', slider_value)
+        tryset(program, f'{uniform_name}.min_value', min_val)
+        tryset(program, f'{uniform_name}.max_value', max_val)
         # Only apply sweeps if parameter sweeps UI is enabled
         if self._state.parameter_sweeps_enabled:
-            tryset(self.entity_update_program, f'{uniform_name}.x_sweep', self._state.x_sweeps.get(param_name, 0.0))
-            tryset(self.entity_update_program, f'{uniform_name}.y_sweep', self._state.y_sweeps.get(param_name, 0.0))
-            tryset(self.entity_update_program, f'{uniform_name}.cohort_sweep', self._state.cohort_sweeps.get(param_name, 0.0))
+            tryset(program, f'{uniform_name}.x_sweep', self._state.x_sweeps.get(param_name, 0.0))
+            tryset(program, f'{uniform_name}.y_sweep', self._state.y_sweeps.get(param_name, 0.0))
+            tryset(program, f'{uniform_name}.cohort_sweep', self._state.cohort_sweeps.get(param_name, 0.0))
         else:
-            tryset(self.entity_update_program, f'{uniform_name}.x_sweep', 0.0)
-            tryset(self.entity_update_program, f'{uniform_name}.y_sweep', 0.0)
-            tryset(self.entity_update_program, f'{uniform_name}.cohort_sweep', 0.0)
+            tryset(program, f'{uniform_name}.x_sweep', 0.0)
+            tryset(program, f'{uniform_name}.y_sweep', 0.0)
+            tryset(program, f'{uniform_name}.cohort_sweep', 0.0)
         # Always apply jitter (independent of parameter_sweeps_enabled)
-        tryset(self.entity_update_program, f'{uniform_name}.jitter', self._state.jitters.get(param_name, 0.0))
+        tryset(program, f'{uniform_name}.jitter', self._state.jitters.get(param_name, 0.0))
 
     def _calculate_weighted_trail_settings(self, multi_load_service) -> tuple[float, float]:
         """Calculate weighted average trail settings based on multi-load window.

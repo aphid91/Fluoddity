@@ -39,6 +39,9 @@ flat out int v_dead;
 // with the canvas under pan and zoom.
 vec2 world_to_ndc(vec2 world_pos) {
     float tex_aspect = canvas_resolution.x / canvas_resolution.y;
+    // Positions are in the simulation's aspect-corrected space; normalise to
+    // the [-1,1] square this transform was written for.
+    world_pos /= vec2(sqrt(tex_aspect), 1.0 / sqrt(tex_aspect));
     float window_aspect = window_size.x / window_size.y;
 
     float scale_x, scale_y;
