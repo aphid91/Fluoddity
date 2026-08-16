@@ -67,6 +67,13 @@ class AudioState:
     # --- Read-only telemetry, updated by the service each frame ---
     # All transient: these describe the running stream, not user intent.
     starves: int = field(default=0, metadata=TRANSIENT)
+    # Blocks produced but discarded because the CPU ring was full. Non-zero
+    # means the tracer is outrunning the sound device.
+    overruns: int = field(default=0, metadata=TRANSIENT)
+    # Outstanding GL fences. Should stay within [0, AUDIO_SLOTS]; a value that
+    # climbs steadily means sync objects are leaking into the display driver,
+    # which degrades the whole desktop rather than just this app.
+    live_fences: int = field(default=0, metadata=TRANSIENT)
     in_flight: int = field(default=0, metadata=TRANSIENT)
     ring_fill: float = field(default=0.0, metadata=TRANSIENT)
     peak: float = field(default=0.0, metadata=TRANSIENT)

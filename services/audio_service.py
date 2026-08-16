@@ -120,6 +120,12 @@ class AudioService:
         self._action = None
         self.active = False
         self.starves = 0
+        # Blocks produced but dropped because the CPU ring was full.
+        self.overruns = 0
+        # Fences created minus fences deleted. Should oscillate in [0, SLOTS]
+        # and never trend upward; a climbing value means sync objects are
+        # leaking into the driver.
+        self.live_fences = 0
         self.peak = 0.0
         self.device_name = ""
         self.last_error = ""
@@ -210,9 +216,12 @@ class AudioService:
             except Exception:
                 self.device_name = "default"
 
+            # Any fence still held from a previous run has to be deleted, not
+            # dropped on the floor by reassigning the list.
+            self._release_fences()
             self.w = self.r = 0
-            self.fences = [None] * AUDIO_SLOTS
             self.starves = 0
+            self.overruns = 0
             self.active = True
             self.last_error = ""
             return True
@@ -232,11 +241,22 @@ class AudioService:
         self.rb = None
         self._action = None
         self.active = False
+        self._release_fences()
+        self.w = self.r = 0
+
+    def _release_fences(self):
+        """Delete every outstanding fence.
+
+        Guarded on self.sync: start() can fail before _ensure_gpu() has run,
+        and stop() is called from that failure path.
+        """
+        if self.sync is None:
+            return
         for i, f in enumerate(self.fences):
             if f is not None:
                 self.sync.delete_sync(f)
+                self.live_fences -= 1
                 self.fences[i] = None
-        self.w = self.r = 0
 
     def cleanup(self):
         self.stop()
@@ -288,8 +308,17 @@ class AudioService:
     def note_dispatch(self):
         """Fence the dispatch that was just issued and claim its slot."""
         slot = self.w % AUDIO_SLOTS
-        self.sync.barrier()
+        # The tracer already issued a shader-storage barrier after its last
+        # sub-dispatch and after the reduction, so the ordering this fence
+        # needs is established; no extra barrier here.
+        stale = self.fences[slot]
+        if stale is not None:
+            # Should not happen while can_dispatch() is respected, but never
+            # overwrite a live GLsync handle - that is an unrecoverable leak.
+            self.sync.delete_sync(stale)
+            self.live_fences -= 1
         self.fences[slot] = self.sync.fence()
+        self.live_fences += 1
         self.w += 1
 
     def blocks_wanted(self) -> int:
@@ -303,18 +332,36 @@ class AudioService:
         if not self.active:
             return 0
         drained = 0
-        while self.rb.write_available >= AUDIO_BLOCK and self.r < self.w:
+        # Retire every signalled slot, whether or not there is ring space for
+        # its samples. Gating this on write_available (as it once was) leaked
+        # the fence whenever the CPU ring was full: the slot stayed claimed and
+        # its GLsync was never deleted, so the driver's fence table grew without
+        # bound for as long as audio ran. Dropping a block is a click; leaking
+        # sync objects degrades the whole display driver.
+        while self.r < self.w:
             slot = self.r % AUDIO_SLOTS
             fence = self.fences[slot]
             if fence is None or not self.sync.signalled(fence):
                 break
-            # The fence has signalled, so this is a plain memcpy, not a stall.
-            # Read the reduced mix, not the per-voice lanes.
-            self.mix_buffer.read_into(self.staging, size=AUDIO_BLOCK * 4,
-                                      offset=slot * AUDIO_BLOCK * 4)
+
+            have_room = self.rb.write_available >= AUDIO_BLOCK
+            if have_room:
+                # The fence has signalled, so this is a plain memcpy, not a
+                # stall. Read the reduced mix, not the per-voice lanes.
+                self.mix_buffer.read_into(self.staging, size=AUDIO_BLOCK * 4,
+                                          offset=slot * AUDIO_BLOCK * 4)
+
             self.sync.delete_sync(fence)
+            self.live_fences -= 1
             self.fences[slot] = None
             self.r += 1
+
+            if not have_room:
+                # Ring is full: the slot is reclaimed but the samples are
+                # discarded. The producer is ahead of the sound device, so
+                # this is overrun, not starvation.
+                self.overruns += 1
+                continue
 
             # Same conditioning the offline render uses, so a recorded
             # file matches what the preview sounded like.
@@ -402,6 +449,8 @@ class AudioService:
 
     def update_telemetry(self, settings):
         settings.starves = self.starves
+        settings.overruns = self.overruns
+        settings.live_fences = self.live_fences
         settings.in_flight = self.w - self.r
         settings.peak = float(self.peak)
         settings.device_name = self.device_name

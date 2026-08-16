@@ -112,5 +112,17 @@ class AudioWindowMixin:
                     "The audio ring ran dry. Raise the block count or\n"
                     "reduce per-frame work if this climbs steadily."
                 )
+            imgui.text(f"fences {a.live_fences}/{AUDIO_SLOTS}"
+                       f"   overruns {a.overruns}")
+            if a.live_fences > AUDIO_SLOTS:
+                self._delayed_tooltip(
+                    "GL sync objects are leaking. This degrades the display\n"
+                    "driver system-wide, not just this app. Please report it."
+                )
+            elif a.overruns > 0:
+                self._delayed_tooltip(
+                    "Blocks were produced faster than the device consumed\n"
+                    "them and were dropped. Harmless in small numbers."
+                )
 
         imgui.end()

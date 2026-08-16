@@ -32,6 +32,14 @@ LOCAL_SIZE = 64
 # + 4 floats of audio voice state.
 STATE_STRIDE = 40
 
+# glMemoryBarrier bit for SSBO writes becoming visible to later shaders.
+# moderngl's ctx.memory_barrier() defaults to GL_ALL_BARRIER_BITS, which
+# serialises the entire pipeline and flushes every cache. The tracer hot loop
+# runs up to several hundred dispatches per frame in audio mode, so paying the
+# full barrier each time costs far more than the dispatch itself; every
+# dependency in that loop is SSBO -> SSBO.
+GL_SHADER_STORAGE_BARRIER_BIT = 0x00002000
+
 
 class StreamlineService:
     """Traces persistent streamline particles and renders their recent paths."""
@@ -153,6 +161,15 @@ class StreamlineService:
     def _bind(self):
         self.path_buffer.bind_to_storage_buffer(PATH_BINDING)
         self.state_buffer.bind_to_storage_buffer(STATE_BINDING)
+
+    def _ssbo_barrier(self):
+        """Order this dispatch's SSBO writes before the next dispatch's reads.
+
+        Narrower than ctx.memory_barrier() (GL_ALL_BARRIER_BITS) - see the note
+        on GL_SHADER_STORAGE_BARRIER_BIT. Every dependency in the tracer loop is
+        SSBO -> SSBO: the ring and particle-state buffers.
+        """
+        self.ctx.memory_barrier(GL_SHADER_STORAGE_BARRIER_BIT)
 
     def _run_salt(self, settings) -> int:
         """Population-wide RNG salt.
@@ -330,7 +347,7 @@ class StreamlineService:
                     tryset(self.trace_program, 'FIELD_ALPHA_BASE', base)
                     tryset(self.trace_program, 'FIELD_ALPHA_STEP', inc)
                     self.trace_program.run(groups, 1, 1)
-                    self.ctx.memory_barrier()
+                    self._ssbo_barrier()
                 # Restore for any later non-split use of this program.
                 tryset(self.trace_program, 'STEPS_PER_DISPATCH', steps)
             else:
@@ -345,17 +362,16 @@ class StreamlineService:
             self._dispatch_count += 1
             issued += 1
             if audio_on:
-                # Reduce the per-voice lanes into the mix before fencing, so
-                # the fence covers the reduction too and the readback sees a
-                # finished block.
-                self.ctx.memory_barrier()
+                # The sub-dispatch loop above already barriered after its last
+                # run, so the tracer's lane writes are visible to the reduction.
                 audio_service.reduce(audio_settings, voice_count)
-                # Fence this block so the readback can poll it without
-                # stalling the pipeline.
+                # Order the reduction's writes before the readback, then fence
+                # so the readback can poll without stalling the pipeline.
+                self._ssbo_barrier()
                 audio_service.note_dispatch()
             else:
                 # Each dispatch reads the state the previous one wrote.
-                self.ctx.memory_barrier()
+                self._ssbo_barrier()
 
         return issued
 
@@ -455,10 +471,10 @@ class StreamlineService:
                 tryset(self.trace_program, 'FIELD_ALPHA_BASE', base)
                 tryset(self.trace_program, 'FIELD_ALPHA_STEP', inc)
                 self.trace_program.run(groups, 1, 1)
-                self.ctx.memory_barrier()
+                self._ssbo_barrier()
             self._dispatch_count += 1
             audio_service.reduce(audio_settings, voice_count)
-            self.ctx.memory_barrier()
+            self._ssbo_barrier()
             # Blocking read: offline has no deadline, so this is simpler and
             # cheaper than fencing.
             out.append(audio_service.condition_block(
