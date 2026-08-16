@@ -681,19 +681,30 @@ class StreamlineService:
         tryset(self.trace_program, 'SEED_SCATTER', float(settings.seed_scatter))
         tryset(self.trace_program, 'RUN_SALT', self._run_salt(settings))
 
-    def render_audio_blocks(self, canvas_texture, seed_world, settings,
-                            audio_service, audio_settings, blocks: int,
-                            prev_texture=None,
-                            samples_per_physics_step: float = 0.0):
-        """Advance the tracer purely to produce `blocks` audio blocks.
+    def render_audio_samples(self, canvas_texture, seed_world, settings,
+                             audio_service, audio_settings, samples: int,
+                             prev_texture=None):
+        """Render `samples` audio samples for ONE physics step, while recording.
 
-        Used while recording, where there is no realtime deadline: the caller
-        decides how many blocks a video frame is worth and this renders
-        exactly that many, reading each back synchronously.
+        The offline twin of update_for_physics_step(), and deliberately the
+        same shape: called from inside the physics loop, it advances the tracer
+        exactly `samples` integration steps against the interval the two canvas
+        textures describe, so the blend phase sweeps a true 0 -> 1 across it.
 
-        Returns a list of conditioned mono blocks.
+        The previous version rendered whole 512-sample blocks. A physics step
+        only owes 13-160 samples, so a step that finally owed a block rendered
+        3 to 38 steps' worth of audio against one frozen canvas pair and the
+        field then jumped forward all at once - the same staircase the realtime
+        path had, which is why recordings still zippered after realtime was
+        fixed. It also used _field_split()'s power-of-two rounding, which made
+        a dispatch span a fractional number of physics intervals (0.6, 0.64,
+        0.8) so phase and canvas drifted against each other.
+
+        Returns a list of conditioned mono blocks, emitted only as each
+        512-sample block completes; a call that does not finish a block
+        returns [] and its samples stay in the block being filled.
         """
-        if self.trace_program is None or blocks <= 0:
+        if self.trace_program is None or samples <= 0:
             return []
 
         count = int(max(1, min(settings.count, MAX_STREAMLINES)))
@@ -706,9 +717,14 @@ class StreamlineService:
         voice_count = int(min(max(audio_settings.voice_count, 1), count))
         groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
 
+        # Interpolation is exact here for the same reason it is in realtime:
+        # the caller is inside the physics step these textures describe.
+        self._interleaved = True
+        self._interp_valid = True
+
         self._bind()
         audio_service.bind()
-        self._set_trace_uniforms(settings, seed_world, AUDIO_BLOCK, count,
+        self._set_trace_uniforms(settings, seed_world, samples, count,
                                  canvas_texture, prev_texture)
         tryset(self.trace_program, 'AUDIO_ENABLED', True)
         tryset(self.trace_program, 'AUDIO_VOICE_COUNT', voice_count)
@@ -720,30 +736,43 @@ class StreamlineService:
         tryset(self.trace_program, 'AUDIO_RAMP_DEC',
                audio_service.ramp_decrement(audio_settings))
 
-        sub = self._field_split(samples_per_physics_step, AUDIO_BLOCK)
         out = []
-        for i in range(blocks):
-            slot = i % AUDIO_SLOTS
-            # Same split as the realtime path, so a recorded render and the
-            # preview interpolate identically.
-            for off in range(0, AUDIO_BLOCK, sub):
-                tryset(self.trace_program, 'STEPS_PER_DISPATCH', sub)
-                tryset(self.trace_program, 'AUDIO_SLOT_BASE',
-                       slot * AUDIO_BLOCK + off)
-                tryset(self.trace_program, 'DISPATCH_INDEX',
-                       (self._dispatch_count * AUDIO_BLOCK + off) & 0xFFFFFFFF)
-                base, inc = self._field_alpha(samples_per_physics_step, sub)
-                tryset(self.trace_program, 'FIELD_ALPHA_BASE', base)
-                tryset(self.trace_program, 'FIELD_ALPHA_STEP', inc)
-                self.trace_program.run(groups, 1, 1)
-                self._ssbo_barrier()
-            self._dispatch_count += 1
-            audio_service.reduce(audio_settings, voice_count)
+        remaining = samples
+        issued = 0
+        while remaining > 0:
+            # Fill only to the end of the block in flight, so a dispatch never
+            # straddles two slots. Same rule as the realtime path.
+            room = AUDIO_BLOCK - audio_service.block_fill
+            chunk = min(remaining, room)
+
+            tryset(self.trace_program, 'STEPS_PER_DISPATCH', chunk)
+            tryset(self.trace_program, 'AUDIO_SLOT_BASE',
+                   audio_service.slot_base + audio_service.block_fill)
+            tryset(self.trace_program, 'DISPATCH_INDEX',
+                   (self._dispatch_count * 0x9E3779B9 + issued) & 0xFFFFFFFF)
+            # Phase spans this physics interval, and consecutive chunks of the
+            # same interval continue the ramp rather than restarting it.
+            base = float(samples - remaining) / samples
+            tryset(self.trace_program, 'FIELD_ALPHA_BASE', base)
+            tryset(self.trace_program, 'FIELD_ALPHA_STEP', 1.0 / samples)
+            self.trace_program.run(groups, 1, 1)
             self._ssbo_barrier()
-            # Blocking read: offline has no deadline, so this is simpler and
-            # cheaper than fencing.
-            out.append(audio_service.condition_block(
-                audio_settings, audio_service.read_slot(slot)))
+
+            remaining -= chunk
+            issued += chunk
+            slot = audio_service.w % AUDIO_SLOTS
+            if audio_service.advance_fill(chunk):
+                # Block complete: reduce to mono, then read it back. Blocking
+                # read - offline has no deadline, so this is simpler and
+                # cheaper than fencing.
+                audio_service.reduce(audio_settings, voice_count)
+                self._ssbo_barrier()
+                out.append(audio_service.condition_block(
+                    audio_settings, audio_service.read_slot(slot)))
+                audio_service.w += 1
+
+        self._dispatch_count += 1
+        self._interleaved = False
         return out
 
     # ------------------------------------------------------------------

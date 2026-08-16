@@ -40,23 +40,42 @@ class AudioCapture:
         self._total = 0
         self.frames_captured = 0
 
-    def blocks_owed(self, frames: float = 1.0) -> int:
-        """Whole blocks to render for `frames` video frames.
+    def samples_owed(self, frames: float = 1.0) -> int:
+        """Whole samples to render for `frames` video frames.
 
-        Fractional values are expected: audio is generated per physics step,
+        Fractional `frames` is expected: audio is generated per physics step,
         so each step owes 1/speedmult of a video frame. The debt accumulates,
         so the per-frame total stays exact however it is subdivided.
+
+        Granularity is samples rather than whole blocks because a physics step
+        owes far less than a block - 13 samples at speedmult=60, 32 at
+        speedmult=25. Quantising to blocks meant a step that finally owed one
+        rendered 512 samples, three to thirty-eight physics steps' worth of
+        audio, against a single frozen canvas pair; the field then jumped
+        forward all at once. That is the staircase the realtime path no longer
+        has, and it is why recordings still zippered after realtime was fixed.
         """
         self._debt += self.samples_per_frame * frames
         self.frames_captured += frames
-        n = int(self._debt // AUDIO_BLOCK)
-        return max(0, n)
+        n = max(0, int(self._debt))
+        # Retire the debt here, not in add_samples(): every sample handed out
+        # IS rendered by the caller, but they are only handed BACK once the
+        # 512-sample block they landed in fills up. Waiting for that made the
+        # debt monotonically grow, so each call re-requested the whole
+        # outstanding backlog (53, 106, 160, 213 ...) and rendered it against
+        # one frozen canvas - reintroducing the very staircase this replaced.
+        self._debt -= n
+        return n
 
-    def add_block(self, block: np.ndarray):
-        """Append a rendered block and retire that much debt."""
-        self._chunks.append(np.asarray(block, dtype=np.float32).copy())
-        self._total += len(block)
-        self._debt -= len(block)
+    def add_samples(self, samples: np.ndarray):
+        """Append rendered samples to the captured audio.
+
+        Accepts any length, so a physics step can contribute its own small
+        share rather than a whole block. Does not touch the debt: that is
+        retired by samples_owed() when the work is dispatched.
+        """
+        self._chunks.append(np.asarray(samples, dtype=np.float32).copy())
+        self._total += len(samples)
 
     @property
     def duration(self) -> float:

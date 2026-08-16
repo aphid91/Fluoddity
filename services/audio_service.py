@@ -495,6 +495,12 @@ class AudioService:
         """Reset conditioning state before an offline render."""
         self._ensure_gpu()
         self._envelope = 1.0
+        # The offline path fills blocks across several physics steps, so it
+        # uses the same slot cursor and partial-fill counter the realtime path
+        # does. A leftover fill from a previous render would offset every
+        # block of this one.
+        self.w = self.r = 0
+        self.block_fill = 0
         self.limiter = Limiter(int(settings.sample_rate),
                                ceiling=settings.limiter_ceiling)
 

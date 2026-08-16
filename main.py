@@ -700,20 +700,21 @@ class App:
         if cap is None:
             return
         # A video frame is worth sample_rate/VIDEO_FPS samples; this step owes
-        # its share. blocks_owed accumulates the fractional remainder, so the
-        # per-frame total stays exact. total_steps is the speedmult the runner
-        # is actually looping over, so it cannot drift from the real count.
-        blocks = cap.blocks_owed(1.0 / max(1, total_steps))
-        if blocks <= 0:
+        # its share. Asked for in SAMPLES, not whole blocks: a physics step
+        # owes far less than a block, and rendering a whole one against this
+        # step's frozen canvas is what made recordings zipper. The debt
+        # accumulates, so the per-frame total stays exact. total_steps is the
+        # speedmult the runner is actually looping over, so it cannot drift.
+        samples = cap.samples_owed(1.0 / max(1, total_steps))
+        if samples <= 0:
             return
 
-        for block in self.streamline_service.render_audio_blocks(
+        for block in self.streamline_service.render_audio_samples(
                 self.sim.can, self._streamline_seed(ui_state),
                 ui_state.streamline,
-                self.audio_service, ui_state.audio, blocks,
-                prev_texture=self._prev_canvas(),
-                samples_per_physics_step=self._samples_per_physics_step(ui_state)):
-            cap.add_block(block)
+                self.audio_service, ui_state.audio, samples,
+                prev_texture=self._prev_canvas()):
+            cap.add_samples(block)
 
     def _finish_audio_capture(self):
         """Write the captured audio and mux it into the finished video."""
