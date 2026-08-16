@@ -353,11 +353,13 @@ vec2 get_can_lerp(vec2 p){
     vec2 uv = canvas_uv(p);
     vec2 cur = texture(canvas, uv).rg;
     if(!FIELD_INTERPOLATE) return cur;
-    // fract, not clamp: the phase measures position within one physics
-    // interval and the tracer runs many steps per interval, so it legitimately
-    // passes 1.0 mid-dispatch. Clamping would flatten the blend to the current
-    // frame for the rest of the dispatch instead of continuing the ramp.
-    return mix(texture(canvas_prev, uv).rg, cur, fract(g_field_alpha));
+    // clamp, not fract. The phase is driven by an estimate of how many steps
+    // fit in a physics interval, so it can run past 1.0 before the real
+    // interval ends. Wrapping there restarts the blend at the previous frame
+    // mid-interval, which is a discontinuity in the sensed field; holding at
+    // the current frame just means the last few samples of an interval stop
+    // interpolating, which is inaudible by comparison.
+    return mix(texture(canvas_prev, uv).rg, cur, clamp(g_field_alpha, 0.0, 1.0));
 }
 #endif
 vec4 get_field(vec2 p){

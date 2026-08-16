@@ -69,6 +69,10 @@ class StreamlineService:
         self._last_physics_frame = -1  # sim.frame_count at the last phase reset
         self._stale_updates = 0  # Consecutive updates with no physics step
         self._canvas_advancing = True  # False once the canvas looks frozen
+        # Integration steps observed within the current physics interval, and
+        # the smoothed measurement of how many an interval actually holds.
+        self._steps_since_physics_frame = 0
+        self._measured_spp = 0.0
         self._interp_valid = False  # Set per dispatch; see _set_trace_uniforms
         self.sim = None  # Set by the orchestrator; supplies the physics uniforms
 
@@ -266,20 +270,32 @@ class StreamlineService:
         """
         # Interpolation is only meaningful when the whole dispatch lands
         # inside the single physics interval the two canvas textures describe.
-        self._interp_valid = samples_per_physics_step >= steps
+        self._interp_valid = max(samples_per_physics_step,
+                                 self._measured_spp) >= steps
         if samples_per_physics_step <= 1.0:
             # The canvas moves at least as fast as the tracer; nothing to
             # interpolate.
             return 1.0, 0.0
-        inc = 1.0 / samples_per_physics_step
+
+        # Prefer the measured interval length; fall back to the caller's
+        # estimate until one exists.
+        spp = self._measured_spp if self._measured_spp > 1.0 else samples_per_physics_step
+        self._steps_since_physics_frame += steps
+
+        inc = 1.0 / spp
         base = self._field_phase
-        # Wrap rather than clamp: the phase measures position within ONE
-        # physics interval, and the tracer runs several sub-dispatches per
-        # interval. Clamping would pin it at 1.0 and stop interpolating;
-        # restarting it at 0 every sub-dispatch is what caused the 750 Hz
-        # sawtooth. Wrapping keeps the ramp continuous across sub-dispatch
-        # boundaries and resets it only where the canvas genuinely advances.
-        self._field_phase = (base + inc * steps) % 1.0
+        end = base + inc * steps
+
+        # The phase must not be cut short. samples_per_physics_step is an
+        # estimate from smoothed render fps, so it disagrees with the real
+        # cadence by a few percent and drifts run to run (measured 196..207
+        # for a nominal 200). The frame_count watch in update() then reset a
+        # ramp that was still mid-sweep - slamming the blend from ~0.95 back
+        # to 0.0 - which is a discontinuity in the sensed field at exactly the
+        # physics rate, and audible as a buzz there. Clamping at 1.0 instead
+        # means an early reset lands on a blend that is already at the current
+        # frame, so the reset is a no-op rather than a jump.
+        self._field_phase = min(1.0, end)
         return base, inc
 
     def update(self, canvas_texture: moderngl.Texture,
@@ -319,6 +335,24 @@ class StreamlineService:
         if self.sim is not None:
             fc = getattr(self.sim, 'frame_count', None)
             if fc is not None and fc != self._last_physics_frame:
+                # Measure how many steps the last interval actually took,
+                # rather than predicting it from render fps. The prediction
+                # assumes a steady 60fps; when the app runs slower the physics
+                # rate drops with it but the audio rate does not, so the
+                # estimate came out several times too small and the ramp
+                # finished long before the interval did.
+                if self._last_physics_frame >= 0:
+                    steps = self._steps_since_physics_frame
+                    if steps > 0:
+                        n = fc - self._last_physics_frame
+                        measured = steps / max(1, n)
+                        # Smoothed: the interval is not perfectly regular, and
+                        # a jumpy estimate is itself a modulation.
+                        self._measured_spp = (0.8 * self._measured_spp
+                                              + 0.2 * measured
+                                              if self._measured_spp > 0
+                                              else measured)
+                self._steps_since_physics_frame = 0
                 self._last_physics_frame = fc
                 self._field_phase = 0.0
                 self._stale_updates = 0
