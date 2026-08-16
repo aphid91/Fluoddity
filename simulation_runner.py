@@ -21,9 +21,10 @@ class SimulationRunner:
         # Optional callback(ui_state, step_index, total_steps) run after every
         # physics step. The canvas ping-pongs between two textures, so only the
         # latest pair (frames N and N-1) is ever readable; anything that has to
-        # observe every physics frame - the streamline tracer's audio tap - has
-        # to run here rather than after the whole speedmult batch, or it skips
-        # speedmult-1 frames out of every speedmult.
+        # observe every physics frame - the streamline tracer's audio tap, both
+        # realtime and while recording - has to run here rather than after the
+        # whole speedmult batch, or it skips speedmult-1 frames out of every
+        # speedmult.
         self.post_physics_step_hook = None
         self.command_handler = command_handler
         self.window = window
@@ -302,6 +303,9 @@ class SimulationRunner:
 
         # Let observers that need every physics frame run now, while this
         # step's canvas is still the newest of the two ping-pong textures.
+        # Both the realtime tracer and the offline audio capture depend on
+        # this: running either after the whole frame leaves it sampling one
+        # frozen canvas per batch instead of an advancing one.
         if self.post_physics_step_hook is not None:
             self.post_physics_step_hook(ui_state, step_index, total_steps)
 

@@ -40,8 +40,13 @@ class AudioCapture:
         self._total = 0
         self.frames_captured = 0
 
-    def blocks_owed(self, frames: int = 1) -> int:
-        """Whole blocks to render for `frames` video frames."""
+    def blocks_owed(self, frames: float = 1.0) -> int:
+        """Whole blocks to render for `frames` video frames.
+
+        Fractional values are expected: audio is generated per physics step,
+        so each step owes 1/speedmult of a video frame. The debt accumulates,
+        so the per-frame total stays exact however it is subdivided.
+        """
         self._debt += self.samples_per_frame * frames
         self.frames_captured += frames
         n = int(self._debt // AUDIO_BLOCK)

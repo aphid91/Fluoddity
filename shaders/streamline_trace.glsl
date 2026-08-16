@@ -331,7 +331,7 @@ void main() {
         //
         // To try the post-integration variant instead, comment this line out
         // and uncomment the one marked POST-INTEGRATION below, then press V.
-        float raw_power = dot(force, vel)*100.;
+        float raw_power = dot(force, vel)*1.;
 
         // Integrate exactly as a real particle does: velocity IS the step,
         // there is no separate step scale.
