@@ -656,13 +656,23 @@ class App:
         prev = self.ctx.fbo
         try:
             fbo.use()
-            # Draw in the texture's own space: the assembled frame is the
-            # whole canvas, so no camera transform applies here.
+            # The assembled frame is NOT the whole canvas - frame_assembly.frag
+            # already applied the camera (world = ndc*camera_zoom +
+            # camera_position), so it is the zoomed, panned view. Drawing the
+            # overlay at identity here put the full canvas extent on top of a
+            # zoomed image, which is why the streamlines came out tiny and
+            # off-register as soon as the camera was zoomed in. Pass the same
+            # camera the on-screen draw uses so the two agree.
+            #
+            # Aspect comes from the window, not the texture: the assembler
+            # frames with screen_aspect, so the recorded image has the window's
+            # framing even when the encoder's texture is a different size.
+            width, height = glfw.get_framebuffer_size(self.window)
             self.streamline_service.draw(
-                cam_pos=(0.0, 0.0),
-                cam_zoom=1.0,
-                canvas_resolution=assembled_tex.size,
-                window_size=assembled_tex.size,
+                cam_pos=tuple(self.camera.position),
+                cam_zoom=self.camera.zoom,
+                canvas_resolution=self.sim.can.size,
+                window_size=(width, height),
                 settings=streamline,
             )
         finally:
