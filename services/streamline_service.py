@@ -40,6 +40,12 @@ STATE_STRIDE = 40
 # dependency in that loop is SSBO -> SSBO.
 GL_SHADER_STORAGE_BARRIER_BIT = 0x00002000
 
+# update() calls with no physics step before the canvas counts as frozen.
+# One rendered frame issues several tracer updates inside a single physics
+# step, so this has to tolerate a few; a paused simulation exceeds it
+# immediately and keeps climbing.
+STALE_UPDATES_BEFORE_FROZEN = 4
+
 
 class StreamlineService:
     """Traces persistent streamline particles and renders their recent paths."""
@@ -61,6 +67,8 @@ class StreamlineService:
         self._needs_reset = True  # Force a seed before the first dispatch
         self._field_phase = 0.0  # Position between physics steps, 0..1
         self._last_physics_frame = -1  # sim.frame_count at the last phase reset
+        self._stale_updates = 0  # Consecutive updates with no physics step
+        self._canvas_advancing = True  # False once the canvas looks frozen
         self._interp_valid = False  # Set per dispatch; see _set_trace_uniforms
         self.sim = None  # Set by the orchestrator; supplies the physics uniforms
 
@@ -300,11 +308,27 @@ class StreamlineService:
         # The two canvas textures describe the interval ending at the current
         # physics step, so the blend phase restarts only when that step
         # changes - not on every sub-dispatch, which would sawtooth.
+        #
+        # Tracking whether the canvas is advancing at all also matters: when
+        # the simulation is paused the two textures freeze holding two
+        # DIFFERENT frames (N and N-1), and a blend that keeps sweeping
+        # between them makes the sensed field oscillate at the simulated
+        # physics rate - audible as the audio being modulated at that rate
+        # with the sim stopped. There is no interval to interpolate across
+        # when nothing is moving.
         if self.sim is not None:
             fc = getattr(self.sim, 'frame_count', None)
             if fc is not None and fc != self._last_physics_frame:
                 self._last_physics_frame = fc
                 self._field_phase = 0.0
+                self._stale_updates = 0
+            else:
+                # Many dispatches legitimately land inside one physics step,
+                # so a single stale update proves nothing. Only treat the
+                # canvas as stopped once it has failed to advance for longer
+                # than one interval could plausibly last.
+                self._stale_updates += 1
+        self._canvas_advancing = self._stale_updates <= STALE_UPDATES_BEFORE_FROZEN
 
         count = int(max(1, min(settings.count, MAX_STREAMLINES)))
 
@@ -443,7 +467,10 @@ class StreamlineService:
         # staircase it replaces, so it is gated rather than always on.
         interp = (prev_texture is not None
                   and prev_texture is not canvas_texture
-                  and self._interp_valid)
+                  and self._interp_valid
+                  # A frozen canvas has no interval to blend across; its two
+                  # textures just hold two different old frames.
+                  and self._canvas_advancing)
         (prev_texture if interp else canvas_texture).use(location=2)
         tryset(self.trace_program, 'canvas_prev', 2)
         tryset(self.trace_program, 'FIELD_INTERPOLATE', bool(interp))
