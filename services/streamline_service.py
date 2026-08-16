@@ -284,7 +284,7 @@ class StreamlineService:
             # this deliberately does not "drop backlog" the way the visual
             # path does.
             self._accumulator = 0.0
-            n = min(audio_service.blocks_wanted(),
+            n = min(audio_service.blocks_wanted(dt),
                     AUDIO_MAX_DISPATCHES_PER_FRAME)
             if n <= 0:
                 return 0

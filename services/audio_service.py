@@ -122,6 +122,8 @@ class AudioService:
         self.starves = 0
         # Blocks produced but dropped because the CPU ring was full.
         self.overruns = 0
+        # Fractional blocks owed to the device; see blocks_wanted().
+        self._block_debt = 0.0
         # Fences created minus fences deleted. Should oscillate in [0, SLOTS]
         # and never trend upward; a climbing value means sync objects are
         # leaking into the driver.
@@ -222,6 +224,7 @@ class AudioService:
             self.w = self.r = 0
             self.starves = 0
             self.overruns = 0
+            self._block_debt = 0.0
             self.active = True
             self.last_error = ""
             return True
@@ -321,11 +324,40 @@ class AudioService:
         self.live_fences += 1
         self.w += 1
 
-    def blocks_wanted(self) -> int:
-        """How many blocks the CPU ring currently has room for."""
+    def blocks_wanted(self, dt: float = 0.0) -> int:
+        """How many blocks to produce now.
+
+        Paced by what the sound device actually consumes, not by how much room
+        the ring happens to have. Ring space alone is a free-running producer:
+        the readback frees slots in the same frame, so the tracer refills space
+        that is about to be consumed and the surplus is discarded (measured
+        2.14 blocks/frame produced against 1.57 consumed - a 36% overrun).
+        That waste is cheap while a step is one texture read and expensive once
+        each step is a full particle evaluation.
+
+        The debt is accumulated in fractional blocks so the long-run rate is
+        exact, then bounded by ring space and free GPU slots.
+        """
         if not self.active:
             return 0
-        return max(0, self.rb.write_available // AUDIO_BLOCK)
+
+        room = max(0, self.rb.write_available // AUDIO_BLOCK)
+
+        # Prefill: get the ring to a working depth before pacing takes over,
+        # otherwise playback starts against a nearly empty buffer.
+        target = AUDIO_RB_BLOCKS // 2
+        if self.rb.read_available // AUDIO_BLOCK < target:
+            self._block_debt = 0.0
+            return room
+
+        self._block_debt += max(0.0, dt) * self._sample_rate / AUDIO_BLOCK
+        # Never bank more than a ring's worth; a long hitch should resume at
+        # the current time, not replay the backlog.
+        self._block_debt = min(self._block_debt, float(AUDIO_RB_BLOCKS))
+        n = int(self._block_debt)
+        n = min(n, room)
+        self._block_debt -= n
+        return n
 
     def pump(self, settings) -> int:
         """Move every ready GPU block into the audio ring. Returns count."""
