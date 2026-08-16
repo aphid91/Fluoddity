@@ -86,6 +86,22 @@ class StreamlineWindowMixin:
             if audio_locked:
                 imgui.text_disabled("  locked by Audio")
 
+            _, s.field_interpolation = imgui.checkbox(
+                "Field Interpolation", s.field_interpolation
+            )
+            self._delayed_tooltip(
+                "Blend the sensed field between the previous and current\n"
+                "canvas frame instead of sampling it as a staircase.\n"
+                "\n"
+                "The canvas only updates once per physics step, which is\n"
+                "dozens of audio samples apart, so without this the field is\n"
+                "piecewise constant. Turn it off to hear whether a buzz at\n"
+                "the physics rate comes from the interpolation or from the\n"
+                "field genuinely stepping."
+            )
+            if not s.field_interpolation:
+                imgui.text_disabled("  field steps at the physics rate")
+
             imgui.separator()
 
             # === Integration ===

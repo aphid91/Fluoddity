@@ -465,7 +465,8 @@ class StreamlineService:
         # would spend most of its samples clamped at the current frame with a
         # discontinuity at the clamp. Measured, that is worse than the
         # staircase it replaces, so it is gated rather than always on.
-        interp = (prev_texture is not None
+        interp = (settings.field_interpolation
+                  and prev_texture is not None
                   and prev_texture is not canvas_texture
                   and self._interp_valid
                   # A frozen canvas has no interval to blend across; its two

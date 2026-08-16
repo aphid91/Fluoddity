@@ -38,6 +38,13 @@ class StreamlineState:
     enabled: bool = False  # Whether the Streamlines window / overlay is active
     show_window: bool = False  # Whether the Streamlines control window is visible
 
+    # Blend the field between the previous and current canvas frame instead of
+    # sampling it as a staircase. Exposed as a toggle because it sits directly
+    # in the audio path: if a buzz at the physics rate is coming from the
+    # interpolation rather than from the field genuinely stepping, turning
+    # this off is the fastest way to tell.
+    field_interpolation: bool = True
+
     # --- Scheduling (independent of both render and physics cadence) ---
     dispatch_hz: float = 60.0  # Target tracer dispatches per second
     steps_per_dispatch: int = 8  # Integration steps advanced per dispatch
