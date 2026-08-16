@@ -112,6 +112,11 @@ class AudioService:
         self.fences = [None] * AUDIO_SLOTS
         self.w = 0                # Next slot to dispatch into
         self.r = 0                # Next slot to read back
+        # Samples already written into the slot at w. The interleaved producer
+        # fills a block across several physics intervals rather than in one
+        # dispatch, so a block is only complete - reduced and fenced - once
+        # this reaches AUDIO_BLOCK.
+        self.block_fill = 0
         self.staging = np.zeros(AUDIO_BLOCK, dtype="f4")
         self.stereo = np.zeros((AUDIO_BLOCK, 2), dtype="f4")
         self.limiter = None
@@ -222,6 +227,7 @@ class AudioService:
             # dropped on the floor by reassigning the list.
             self._release_fences()
             self.w = self.r = 0
+            self.block_fill = 0
             self.starves = 0
             self.overruns = 0
             self._block_debt = 0.0
@@ -246,6 +252,7 @@ class AudioService:
         self.active = False
         self._release_fences()
         self.w = self.r = 0
+        self.block_fill = 0
 
     def _release_fences(self):
         """Delete every outstanding fence.
@@ -299,6 +306,18 @@ class AudioService:
         tryset(self.mix_program, 'BLOCK_SIZE', AUDIO_BLOCK)
         tryset(self.mix_program, 'MIX_GAIN', float(gain))
         self.mix_program.run((AUDIO_BLOCK + 63) // 64, 1, 1)
+
+    def advance_fill(self, samples: int) -> bool:
+        """Record `samples` written into the block in flight.
+
+        Returns True when that block is now complete, which is the caller's
+        signal to reduce and fence it.
+        """
+        self.block_fill += int(samples)
+        if self.block_fill >= AUDIO_BLOCK:
+            self.block_fill = 0
+            return True
+        return False
 
     def can_dispatch(self) -> bool:
         """True while there is a free GPU slot.

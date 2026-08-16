@@ -18,6 +18,13 @@ class SimulationRunner:
         # Optional callback(assembled_tex, ui_state) run before a recorded
         # frame is encoded, for compositing overlays into the video.
         self.pre_record_hook = None
+        # Optional callback(ui_state, step_index, total_steps) run after every
+        # physics step. The canvas ping-pongs between two textures, so only the
+        # latest pair (frames N and N-1) is ever readable; anything that has to
+        # observe every physics frame - the streamline tracer's audio tap - has
+        # to run here rather than after the whole speedmult batch, or it skips
+        # speedmult-1 frames out of every speedmult.
+        self.post_physics_step_hook = None
         self.command_handler = command_handler
         self.window = window
         self.advanced_drawing_processor = advanced_drawing_processor
@@ -230,13 +237,14 @@ class SimulationRunner:
 
     def _run_physics_step(self, ui_state, draw_mode, mouse_tex_coords,
                            draw_power_value, tiling_mode, step_index,
-                           erase_mode=False):
+                           erase_mode=False, total_steps=1):
         """Run a single physics step and handle deferred entity selection.
 
         Args:
             step_index: Current step within the frame (0-based).
                         Entity selection only checked on step 0.
             erase_mode: Whether right-click eraser is active.
+            total_steps: speedmult, so the hook can divide its work per step.
         """
         adv_prefs = ui_state.preferences
         advanced_active = adv_prefs.advanced_drawing_enabled
@@ -292,6 +300,11 @@ class SimulationRunner:
         if step_index == 0 and self.command_handler.has_pending_entity_selection:
             self.command_handler.try_complete_entity_selection(ui_state)
 
+        # Let observers that need every physics frame run now, while this
+        # step's canvas is still the newest of the two ping-pong textures.
+        if self.post_physics_step_hook is not None:
+            self.post_physics_step_hook(ui_state, step_index, total_steps)
+
     def _process_assembled_frame(self, assembled_tex, ui_state):
         """Handle a completed assembled frame: store it and feed to video recorder."""
         if assembled_tex is None:
@@ -330,7 +343,8 @@ class SimulationRunner:
         for step in range(speedmult):
             self._run_physics_step(
                 ui_state, draw_mode, mouse_tex_coords, draw_power_value,
-                tiling_mode, step, erase_mode=erase_mode
+                tiling_mode, step, erase_mode=erase_mode,
+                total_steps=speedmult
             )
 
             # Only render on frames matching the blur quality cadence
@@ -356,7 +370,8 @@ class SimulationRunner:
         for step in range(speedmult):
             self._run_physics_step(
                 ui_state, draw_mode, mouse_tex_coords, draw_power_value,
-                tiling_mode, step, erase_mode=erase_mode
+                tiling_mode, step, erase_mode=erase_mode,
+                total_steps=speedmult
             )
 
         raw_view_tex = self.camera.generate_view_texture(tiling_mode=tiling_mode)

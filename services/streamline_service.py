@@ -74,6 +74,10 @@ class StreamlineService:
         self._steps_since_physics_frame = 0
         self._measured_spp = 0.0
         self._interp_valid = False  # Set per dispatch; see _set_trace_uniforms
+        # Work owed to the tracer, in integration steps, when it is being
+        # driven from inside the physics loop. See update_for_physics_step().
+        self._step_debt = 0.0
+        self._interleaved = False  # True while the physics loop drives us
         self.sim = None  # Set by the orchestrator; supplies the physics uniforms
 
         self._max_line_width = self._query_max_line_width()
@@ -298,6 +302,153 @@ class StreamlineService:
         self._field_phase = min(1.0, end)
         return base, inc
 
+    def update_for_physics_step(self, canvas_texture, seed_world, settings,
+                                steps_owed: float, audio_service=None,
+                                audio_settings=None, prev_texture=None):
+        """Advance the tracer inside a single physics step.
+
+        This is the interleaved path, and it is what makes the field
+        interpolation actually work at speedmult > 1.
+
+        The canvas ping-pongs between two textures, so after a rendered frame
+        has run all `speedmult` physics steps back to back, `canvas` and
+        `canvas_prev` hold only frames N and N-1. A tracer that runs after the
+        batch can therefore interpolate across exactly one interval and jumps
+        blind over the other speedmult-1 - at speedmult=25 that is 24 of every
+        25 field updates skipped, which is the "zippery above ~240 Hz" seam.
+        The residual artifact sits at the RENDER rate, not the physics rate,
+        which is why raising the physics rate never cured it.
+
+        Called from SimulationRunner.post_physics_step_hook, the two textures
+        genuinely describe the interval this call is inside, so the blend phase
+        sweeps a true 0 -> 1 across it and every physics frame gets sensed.
+
+        Args:
+            steps_owed: Integration steps this physics step should produce.
+                Fractional; the remainder is carried so the long-run rate is
+                exact rather than quantised to whole steps per physics frame.
+
+        Returns:
+            Number of integration steps actually issued.
+        """
+        if self.trace_program is None or not settings.running:
+            return 0
+
+        audio_on = (audio_service is not None and audio_settings is not None
+                    and audio_settings.enabled and audio_service.active)
+
+        count = int(max(1, min(settings.count, MAX_STREAMLINES)))
+        if count != self._last_count:
+            self._needs_reset = True
+        if settings.request_reset:
+            settings.request_reset = False
+            self._needs_reset = True
+        if self._needs_reset:
+            self._reset(seed_world, settings, count)
+
+        self._step_debt += max(0.0, steps_owed)
+        n_steps = int(self._step_debt)
+        if n_steps <= 0:
+            # Owed less than a whole step this interval - the debt carries, so
+            # the long-run rate stays exact rather than being floored away.
+            # Happens once the physics rate approaches the sample rate.
+            return 0
+        # Cap the catch-up after a hitch. One audio block is already several
+        # physics intervals' worth of work, so anything beyond that is backlog
+        # worth dropping rather than replaying against a stale field.
+        if n_steps > AUDIO_BLOCK:
+            n_steps = AUDIO_BLOCK
+            self._step_debt = 0.0
+        else:
+            self._step_debt -= n_steps
+
+        groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
+
+        # The whole point of this path: the two canvas textures describe THIS
+        # interval, so interpolation is valid over all of it.
+        self._interleaved = True
+        self._interp_valid = True
+
+        self._bind()
+        self._set_trace_uniforms(settings, seed_world, n_steps, count,
+                                 canvas_texture, prev_texture)
+        tryset(self.trace_program, 'AUDIO_ENABLED', bool(audio_on))
+
+        if not audio_on:
+            # Visual only: one dispatch covering this interval's whole share.
+            tryset(self.trace_program, 'STEPS_PER_DISPATCH', n_steps)
+            # Only a decorrelation salt for the per-step hazard roll. Strided
+            # by an odd constant rather than by the step count, so consecutive
+            # dispatches cannot land on an index a previous one already used.
+            tryset(self.trace_program, 'DISPATCH_INDEX',
+                   (self._dispatch_count * 0x9E3779B9) & 0xFFFFFFFF)
+            # Phase sweeps the full interval: step k of n_steps sits k/n_steps
+            # of the way from the previous canvas frame to this one.
+            tryset(self.trace_program, 'FIELD_ALPHA_BASE', 0.0)
+            tryset(self.trace_program, 'FIELD_ALPHA_STEP', 1.0 / n_steps)
+            self.trace_program.run(groups, 1, 1)
+            self._ssbo_barrier()
+            self._dispatch_count += 1
+            self._interleaved = False
+            return n_steps
+
+        # Audio: the samples for this interval have to land contiguously in
+        # the block being filled, so this walks the audio ring itself rather
+        # than emitting one whole block per call. A physics interval is
+        # usually a fraction of a block (at 600 Hz physics and 48 kHz audio it
+        # is 80 samples of a 512-sample block), so a block spans several
+        # intervals and is completed by whichever interval fills it.
+        audio_service.bind()
+        voice_count = int(min(max(audio_settings.voice_count, 1), count))
+        tryset(self.trace_program, 'AUDIO_VOICE_COUNT', voice_count)
+        tryset(self.trace_program, 'AUDIO_LANE_STRIDE', audio_service.lane_stride)
+        tryset(self.trace_program, 'AUDIO_AMPLITUDE',
+               1.0 if audio_settings.auto_gain else float(audio_settings.amplitude))
+        tryset(self.trace_program, 'AUDIO_HP_COEFF',
+               audio_service.highpass_coeff(audio_settings))
+        tryset(self.trace_program, 'AUDIO_RAMP_DEC',
+               audio_service.ramp_decrement(audio_settings))
+
+        issued = 0
+        remaining = n_steps
+        while remaining > 0:
+            if not audio_service.can_dispatch():
+                # No free GPU slot; the readback has not caught up. Give the
+                # unspent steps back so the rate stays honest.
+                self._step_debt += remaining
+                break
+            # Fill only up to the end of the block in flight, so a dispatch
+            # never straddles two audio slots.
+            room = AUDIO_BLOCK - audio_service.block_fill
+            chunk = min(remaining, room)
+
+            tryset(self.trace_program, 'STEPS_PER_DISPATCH', chunk)
+            tryset(self.trace_program, 'AUDIO_SLOT_BASE',
+                   audio_service.slot_base + audio_service.block_fill)
+            tryset(self.trace_program, 'DISPATCH_INDEX',
+                   (self._dispatch_count * 0x9E3779B9 + issued) & 0xFFFFFFFF)
+            # Where this chunk sits inside the physics interval. Consecutive
+            # chunks of one interval continue the same ramp rather than each
+            # restarting at 0 - restarting is what caused the 750 Hz sawtooth.
+            base = float(n_steps - remaining) / n_steps
+            tryset(self.trace_program, 'FIELD_ALPHA_BASE', base)
+            tryset(self.trace_program, 'FIELD_ALPHA_STEP', 1.0 / n_steps)
+            self.trace_program.run(groups, 1, 1)
+            self._ssbo_barrier()
+
+            remaining -= chunk
+            issued += chunk
+            if audio_service.advance_fill(chunk):
+                # The block is now full: reduce it to mono and fence it, which
+                # is what hands it to the readback.
+                audio_service.reduce(audio_settings, voice_count)
+                self._ssbo_barrier()
+                audio_service.note_dispatch()
+
+        self._dispatch_count += 1
+        self._interleaved = False
+        return issued
+
     def update(self, canvas_texture: moderngl.Texture,
                seed_world: tuple[float, float], settings, dt: float,
                audio_service=None, audio_settings=None,
@@ -504,8 +655,11 @@ class StreamlineService:
                   and prev_texture is not canvas_texture
                   and self._interp_valid
                   # A frozen canvas has no interval to blend across; its two
-                  # textures just hold two different old frames.
-                  and self._canvas_advancing)
+                  # textures just hold two different old frames. Only the
+                  # free-running path can observe that: the interleaved path
+                  # is called BY the physics loop, so the canvas advanced by
+                  # definition and the staleness counter never applies.
+                  and (self._interleaved or self._canvas_advancing))
         (prev_texture if interp else canvas_texture).use(location=2)
         tryset(self.trace_program, 'canvas_prev', 2)
         tryset(self.trace_program, 'FIELD_INTERPOLATE', bool(interp))
