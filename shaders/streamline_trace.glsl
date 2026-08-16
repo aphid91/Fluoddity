@@ -75,6 +75,12 @@ uniform float AUDIO_AMPLITUDE;
 uniform float AUDIO_HP_COEFF;       // One-pole high-pass coefficient
 uniform float AUDIO_RAMP_DEC;       // Per-sample decrement of the reset ramp
 
+// --- Self-trail correction (see self_trail()) ---
+uniform float SELF_TRAIL_STRENGTH;     // 0 disables; 1 = full estimated deposit
+uniform float SELF_TRAIL_SIZE;         // Brush footprint radius, world units
+uniform float SELF_TRAIL_PERSISTENCE;  // Canvas trail persistence
+uniform float SELF_TRAIL_SPREAD;       // Kernel widening for canvas diffusion
+
 float hash11(float p) {
     p = fract(p * 0.1031);
     p *= p + 33.33;
@@ -127,6 +133,36 @@ vec2 seed_offset(int line_id) {
     return vec2(cos(angle), sin(angle)) * r;
 }
 
+// Trail this particle would have deposited at `at`, had it been a real
+// particle at `src` moving at `src_vel`. Mirrors brush.frag:
+//   brush_out = vel * (1 - trail_persistence) * gaussian(uv - .5, .163)^2
+// over a quad of half-extent `size`, so uv-space radius 0.5 corresponds to
+// world distance `size`.
+vec2 self_trail(vec2 at, vec2 src, vec2 src_vel) {
+    float size = SELF_TRAIL_SIZE;
+    if (size <= 0.0) return vec2(0.0);
+
+    // brush.frag deposits vel * (1-persistence) * gaussian(r_uv, .163)^2 over
+    // a disc of radius `size`. Two gaussians of sigma s multiply to one of
+    // sigma s/sqrt(2), and in world units that is:
+    float sigma = size * 0.163 * 2.0 / 1.41421356;
+
+    // The canvas blurs every step, so by the time a sensor reads this ink it
+    // has spread well past the original footprint. Without accounting for
+    // that the estimate is identically zero at any usable sensor distance -
+    // sensors sit 1.7x to 13x the brush radius away. SELF_TRAIL_SPREAD widens
+    // the kernel to stand in for that accumulated diffusion.
+    sigma *= max(1.0, SELF_TRAIL_SPREAD);
+
+    float d = length(at - src);
+    // Total deposited quantity is preserved as the kernel widens, so the
+    // peak falls as the spread grows - the same ink over a larger area.
+    float peak = (1.0 - SELF_TRAIL_PERSISTENCE)
+               / (2.0 * 3.14159265359 * 0.163 * 0.163);
+    float g = exp(-(d * d) / (2.0 * sigma * sigma));
+    return src_vel * peak * g * SELF_TRAIL_STRENGTH;
+}
+
 void main() {
     int line_id = int(gl_GlobalInvocationID.x);
     if (line_id >= STREAMLINE_COUNT) {
@@ -163,6 +199,12 @@ void main() {
 
     vec2 pos = particles[line_id].pos;
     vec2 vel = particles[line_id].vel;
+    // Previous step's start state, for the self-trail correction. Not carried
+    // across dispatches: the first step of a block simply goes uncorrected,
+    // which is one step in 32-512 and not worth another two state floats.
+    vec2 prev_pos = vec2(0);
+    vec2 prev_vel = vec2(0);
+    bool has_prev = false;
     uint write_index = particles[line_id].write_index;
     uint alive = particles[line_id].alive;
 
@@ -243,10 +285,34 @@ void main() {
         // the field is not piecewise constant across a block of audio samples.
         vec2 ltap = get_can_lerp(pos + left_off);
         vec2 rtap = get_can_lerp(pos + right_off);
+
+        // Self-trail correction.
+        //
+        // A real particle swims in ink it laid down itself: measured, the
+        // canvas at a particle's own position is ~7.8x stronger than at a
+        // random point and ~0.78 cosine-aligned with its own velocity. A
+        // read-only streamer never deposits, so it sees a hole exactly where
+        // a real particle sees its strongest, most self-correlated signal -
+        // which is why streamers diverge on configs that lean on that signal.
+        //
+        // Add back a first-order estimate: the deposit this particle would
+        // have made one step ago, evaluated at each sensor. brush.frag lays
+        // down vel * (1 - trail_persistence) * gaussian(r)^2 over a disc of
+        // radius SELF_TRAIL_SIZE, so this reproduces that at the sensor's
+        // distance from the previous position.
+        if (SELF_TRAIL_STRENGTH > 0.0 && has_prev) {
+            ltap += self_trail(pos + left_off, prev_pos, prev_vel);
+            rtap += self_trail(pos + right_off, prev_pos, prev_vel);
+        }
         float sensor_scaling = SQRT_WORLD_SIZE * 38.855
                              * calculate_setting(sensor_gain, pos, COHORT);
         ltap *= sensor_scaling;
         rtap *= sensor_scaling;
+
+        // Remember this step's start state; the next step's sensors read the
+        // ink that would have been deposited here.
+        vec2 step_pos = pos;
+        vec2 step_vel = vel;
 
         vec2 force = vec2(0);
         vec2 strafe = vec2(0);
@@ -265,7 +331,7 @@ void main() {
         //
         // To try the post-integration variant instead, comment this line out
         // and uncomment the one marked POST-INTEGRATION below, then press V.
-        float raw_power = dot(force, vel);
+        float raw_power = dot(force, vel)*100.;
 
         // Integrate exactly as a real particle does: velocity IS the step,
         // there is no separate step scale.
@@ -276,6 +342,10 @@ void main() {
         // POST-INTEGRATION variant: uses the velocity after drag and the
         // force have been applied. Closer to dot(force, force).
         //float raw_power = dot(force, vel);
+
+        prev_pos = step_pos;
+        prev_vel = step_vel;
+        has_prev = true;
 
         // Advanced-drawing force/strafe field, same as entity_update.
         vec4 draw_sample = get_field(pos);

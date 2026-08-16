@@ -54,9 +54,20 @@ class StreamlineState:
     # --- Population ---
     count: int = 1  # Number of particles
     initial_speed: float = 0.5  # Max magnitude of the random launch velocity
-    # Radius of each particle's own spring target around the seed. The spring
-    # is a point attractor, so without scatter a stiff Restore Force collapses
-    # the whole population onto one identical point.
+    # Self-trail correction. A real particle senses ink it deposited itself:
+    # the canvas at a particle's own position measures ~7.8x stronger than at
+    # a random point and ~0.78 cosine-aligned with its own velocity. A
+    # read-only streamer never deposits, so it is missing exactly that signal.
+    # 1.0 adds back a one-step estimate of it; 0 disables the correction.
+    self_trail_strength: float = 1.0
+    # How far the deposit has diffused by the time a sensor reads it, as a
+    # multiple of the brush kernel width. Sensors sit several brush radii from
+    # the particle, so without widening the estimate is zero everywhere the
+    # sensors actually look.
+    self_trail_spread: float = 4.0
+    # Radius of the disc each particle spawns into around the seed. At 0 they
+    # all start from the same point and, running identical rules, trace
+    # near-identical paths.
     seed_scatter: float = 0.12
     resample_each_frame: bool = True  # Redraw launch directions on each reset
     stop_at_edge: bool = True  # Retire particles that leave the canvas

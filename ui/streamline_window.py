@@ -96,6 +96,28 @@ class StreamlineWindowMixin:
                 "leave no trail. Their behaviour comes from the Physics "
                 "window, not from here.")
 
+            _, s.self_trail_strength = imgui.slider_float(
+                "Self Trail", s.self_trail_strength, 0.0, 3.0, format="%.2f"
+            )
+            self._delayed_tooltip(
+                "Adds back the trail this particle would have deposited one\n"
+                "step ago, which a read-only streamer never lays down.\n"
+                "Real particles sense their own ink strongly: measured 7.8x\n"
+                "the ambient field at their own position, and 0.78 aligned\n"
+                "with their own velocity. Without this, streamers can veer\n"
+                "away from what real particles do. 0 disables it.")
+
+            if s.self_trail_strength > 0.0:
+                _, s.self_trail_spread = imgui.slider_float(
+                    "Self Trail Spread", s.self_trail_spread, 1.0, 16.0,
+                    format="%.1f"
+                )
+                self._delayed_tooltip(
+                    "How far that ink has diffused by the time a sensor\n"
+                    "reads it, in brush-kernel widths. Sensors sit several\n"
+                    "brush radii away, so at 1.0 the correction never\n"
+                    "reaches them and has no effect.")
+
 
 
 

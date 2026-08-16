@@ -437,6 +437,19 @@ class StreamlineService:
         tryset(self.trace_program, 'HAZARD_RATE',
                min(max(float(settings.hazard_rate), 0.0), 1.0))
         tryset(self.trace_program, 'SEED_SCATTER', float(settings.seed_scatter))
+        # Self-trail correction. The brush footprint and trail persistence come
+        # from the simulation so the estimate matches what a real particle
+        # would actually have deposited.
+        tryset(self.trace_program, 'SELF_TRAIL_STRENGTH',
+               float(settings.self_trail_strength))
+        if self.sim is not None:
+            world = max(1e-6, float(self.sim.world_size))
+            tryset(self.trace_program, 'SELF_TRAIL_SIZE',
+                   0.0015 / (world ** 0.5))
+            tryset(self.trace_program, 'SELF_TRAIL_PERSISTENCE',
+                   float(getattr(self.sim._state, 'TRAIL_PERSISTENCE', 0.95)))
+            tryset(self.trace_program, 'SELF_TRAIL_SPREAD',
+                   float(settings.self_trail_spread))
         tryset(self.trace_program, 'RUN_SALT', self._run_salt(settings))
 
     def render_audio_blocks(self, canvas_texture, seed_world, settings,
