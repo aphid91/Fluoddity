@@ -537,6 +537,11 @@ class Sim:
         tryset(program, 'field_texture', field_texture_unit)
         tryset(program, 'frame_count', self.frame_count)
         tryset(program, 'WRITE_RULES', False)
+        # The rule is a uniform, not part of the parameter list, so it has to
+        # be pushed explicitly.
+        rule = getattr(self, '_current_rule', None)
+        if rule is not None:
+            set_rule_uniform(program, rule)
 
         self._assign_physics_setting('AXIAL_FORCE_SETTING', self._state.AXIAL_FORCE, 'Axial Force', 'AXIAL_FORCE', -1.0, 1.0, program)
         self._assign_physics_setting('LATERAL_FORCE_SETTING', self._state.LATERAL_FORCE, 'Lateral Force', 'LATERAL_FORCE', -1.0, 1.0, program)
@@ -795,9 +800,13 @@ class Sim:
     def apply_rule(self, rule: np.ndarray | None) -> None:
         """Apply a rule to the shader."""
         if rule is None:
-            set_rule_uniform(self.entity_update_program, np.zeros((10, 8), dtype=np.float32))
-        else:
-            set_rule_uniform(self.entity_update_program, rule)
+            rule = np.zeros((10, 8), dtype=np.float32)
+        # Remembered so other programs evaluating the shared physics (the
+        # streamline tracer) can be given the same rule. Without it their
+        # target_rule stays zero, which silently sends them down the
+        # generate_random_centers() branch and runs a different rule entirely.
+        self._current_rule = rule
+        set_rule_uniform(self.entity_update_program, rule)
 
     def get_entity_buffer(self) -> moderngl.Buffer:
         """Expose entity buffer for EntityPicker."""
