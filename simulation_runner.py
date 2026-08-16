@@ -18,6 +18,8 @@ class SimulationRunner:
         # Optional callback(assembled_tex, ui_state) run before a recorded
         # frame is encoded, for compositing overlays into the video.
         self.pre_record_hook = None
+        # Optional callback(ui_state, step_index) run after each physics step.
+        self.post_physics_step_hook = None
         self.command_handler = command_handler
         self.window = window
         self.advanced_drawing_processor = advanced_drawing_processor
@@ -291,6 +293,13 @@ class SimulationRunner:
         # Check for deferred entity selection only on first physics step
         if step_index == 0 and self.command_handler.has_pending_entity_selection:
             self.command_handler.try_complete_entity_selection(ui_state)
+
+        # Let the orchestrator do per-physics-step work (offline audio
+        # generation). Running it here rather than after the whole frame is
+        # what keeps recorded audio sampling an advancing canvas instead of
+        # one frozen state per video frame.
+        if self.post_physics_step_hook is not None:
+            self.post_physics_step_hook(ui_state, step_index)
 
     def _process_assembled_frame(self, assembled_tex, ui_state):
         """Handle a completed assembled frame: store it and feed to video recorder."""
