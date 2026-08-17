@@ -32,8 +32,9 @@ GL_BUFFER_UPDATE_BARRIER_BIT = 0x00000200
 # GL uses __stdcall on Windows.
 _FUNC = ctypes.WINFUNCTYPE if sys.platform == "win32" else ctypes.CFUNCTYPE
 
-AUDIO_BINDING = 7   # Per-voice lanes
-MIX_BINDING = 8     # Reduced mono mix
+AUDIO_BINDING = 7    # Per-voice lanes
+MIX_BINDING = 8      # Reduced mono mix
+HISTORY_BINDING = 9  # Per-voice delay history
 
 
 def _gl(name, restype, *argtypes):
@@ -108,6 +109,10 @@ class AudioService:
         self.sync = None
         self.buffer = None       # Per-voice lanes, written by the tracer
         self.mix_buffer = None   # Reduced mono mix, read back to the CPU
+        self.history_buffer = None  # Per-voice delay history, never reclaimed
+        # Total samples appended to the history ring. Monotonic, so it is also
+        # where the next dispatch starts writing (mod the ring length).
+        self.history_cursor = 0
         self.mix_program = None
         self.fences = [None] * AUDIO_SLOTS
         self.w = 0                # Next slot to dispatch into
@@ -157,6 +162,12 @@ class AudioService:
         if self.mix_buffer is None:
             self.mix_buffer = self.ctx.buffer(
                 np.zeros(AUDIO_SLOTS * AUDIO_BLOCK, dtype="f4").tobytes()
+            )
+        if self.history_buffer is None:
+            # One delay ring per voice. 1024 * 16384 * 4B = 67 MB.
+            self.history_buffer = self.ctx.buffer(
+                np.zeros(MAX_VOICES * MAX_VOICE_DELAY_SAMPLES,
+                         dtype="f4").tobytes()
             )
         if self.mix_program is None:
             try:
@@ -271,6 +282,9 @@ class AudioService:
         self.buffer.clear()
         if self.mix_buffer is not None:
             self.mix_buffer.clear()
+        if self.history_buffer is not None:
+            self.history_buffer.clear()
+        self.history_cursor = 0
 
     def _release_fences(self):
         """Delete every outstanding fence.
@@ -288,7 +302,7 @@ class AudioService:
 
     def cleanup(self):
         self.stop()
-        for name in ('buffer', 'mix_buffer', 'mix_program'):
+        for name in ('buffer', 'mix_buffer', 'history_buffer', 'mix_program'):
             obj = getattr(self, name, None)
             if obj is not None:
                 obj.release()
@@ -302,6 +316,7 @@ class AudioService:
         self._ensure_gpu()
         self.buffer.bind_to_storage_buffer(AUDIO_BINDING)
         self.mix_buffer.bind_to_storage_buffer(MIX_BINDING)
+        self.history_buffer.bind_to_storage_buffer(HISTORY_BINDING)
 
     @property
     def slot_base(self) -> int:
@@ -327,6 +342,12 @@ class AudioService:
         tryset(self.mix_program, 'DELAY_ENABLED', bool(settings.voice_delay))
         tryset(self.mix_program, 'DELAY_MIN', lo)
         tryset(self.mix_program, 'DELAY_MAX', hi)
+        tryset(self.mix_program, 'HISTORY_LEN', MAX_VOICE_DELAY_SAMPLES)
+        # Where this block STARTS in history. The tracer has already appended
+        # the block by the time reduce() runs, so the cursor has moved past
+        # it - step back to line the read up with the samples just written.
+        tryset(self.mix_program, 'HISTORY_CURSOR',
+               (self.history_cursor - AUDIO_BLOCK) % MAX_VOICE_DELAY_SAMPLES)
         self.mix_program.run((AUDIO_BLOCK + 63) // 64, 1, 1)
 
     def delay_bounds(self, settings) -> tuple:
@@ -346,12 +367,24 @@ class AudioService:
         lo = min(lo, hi)
         return lo, hi
 
+    def history_base(self) -> int:
+        """Where the dispatch about to be issued should append in history.
+
+        The tracer writes sample k of its chunk at (this + k), masked by the
+        ring length, so consecutive sub-dispatches lay down a continuous
+        stream regardless of how a block is subdivided.
+        """
+        return self.history_cursor % MAX_VOICE_DELAY_SAMPLES
+
     def advance_fill(self, samples: int) -> bool:
         """Record `samples` written into the block in flight.
 
         Returns True when that block is now complete, which is the caller's
         signal to reduce and fence it.
         """
+        # History advances by every sample written, not per block: a block is
+        # filled by several sub-dispatches and the ring has to stay gap-free.
+        self.history_cursor += int(samples)
         self.block_fill += int(samples)
         if self.block_fill >= AUDIO_BLOCK:
             self.block_fill = 0

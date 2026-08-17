@@ -19,7 +19,8 @@ from state.streamline_state import (
     MAX_STEPS, MAX_STREAMLINES, MAX_DISPATCHES_PER_FRAME,
     AUDIO_MAX_DISPATCHES_PER_FRAME,
 )
-from state.audio_state import AUDIO_BLOCK, AUDIO_SLOTS, MAX_VOICES
+from state.audio_state import (AUDIO_BLOCK, AUDIO_SLOTS, MAX_VOICES,
+                               MAX_VOICE_DELAY_SAMPLES)
 
 # SSBO binding points. 0/2/3/4 are claimed by sim.py's entity and rule buffers.
 PATH_BINDING = 5
@@ -408,6 +409,9 @@ class StreamlineService:
                audio_service.highpass_coeff(audio_settings))
         tryset(self.trace_program, 'AUDIO_RAMP_DEC',
                audio_service.ramp_decrement(audio_settings))
+        tryset(self.trace_program, 'AUDIO_HISTORY_ENABLED',
+               bool(audio_settings.voice_delay))
+        tryset(self.trace_program, 'AUDIO_HISTORY_LEN', MAX_VOICE_DELAY_SAMPLES)
 
         issued = 0
         remaining = n_steps
@@ -425,6 +429,8 @@ class StreamlineService:
             tryset(self.trace_program, 'STEPS_PER_DISPATCH', chunk)
             tryset(self.trace_program, 'AUDIO_SLOT_BASE',
                    audio_service.slot_base + audio_service.block_fill)
+            tryset(self.trace_program, 'AUDIO_HISTORY_CURSOR',
+                   audio_service.history_base())
             tryset(self.trace_program, 'DISPATCH_INDEX',
                    (self._dispatch_count * 0x9E3779B9 + issued) & 0xFFFFFFFF)
             # Where this chunk sits inside the physics interval. Consecutive
@@ -582,6 +588,10 @@ class StreamlineService:
                    audio_service.highpass_coeff(audio_settings))
             tryset(self.trace_program, 'AUDIO_RAMP_DEC',
                    audio_service.ramp_decrement(audio_settings))
+            tryset(self.trace_program, 'AUDIO_HISTORY_ENABLED',
+                   bool(audio_settings.voice_delay))
+            tryset(self.trace_program, 'AUDIO_HISTORY_LEN',
+                   MAX_VOICE_DELAY_SAMPLES)
 
         issued = 0
         for _ in range(n):
@@ -593,9 +603,12 @@ class StreamlineService:
                 # physics interval; together they still fill the whole block.
                 sub = self._field_split(samples_per_physics_step, steps)
                 slot_base = audio_service.slot_base
+                hist_base = audio_service.history_base()
                 for off in range(0, steps, sub):
                     tryset(self.trace_program, 'STEPS_PER_DISPATCH', sub)
                     tryset(self.trace_program, 'AUDIO_SLOT_BASE', slot_base + off)
+                    tryset(self.trace_program, 'AUDIO_HISTORY_CURSOR',
+                           hist_base + off)
                     tryset(self.trace_program, 'DISPATCH_INDEX',
                            (self._dispatch_count * steps + off) & 0xFFFFFFFF)
                     base, inc = self._field_alpha(samples_per_physics_step, sub)
@@ -617,6 +630,10 @@ class StreamlineService:
             self._dispatch_count += 1
             issued += 1
             if audio_on:
+                # This path fills a whole block per iteration, so the history
+                # cursor advances by the same amount before the reduction
+                # reads it back.
+                audio_service.advance_fill(steps)
                 # The sub-dispatch loop above already barriered after its last
                 # run, so the tracer's lane writes are visible to the reduction.
                 audio_service.reduce(audio_settings, voice_count)
@@ -743,6 +760,9 @@ class StreamlineService:
                audio_service.highpass_coeff(audio_settings))
         tryset(self.trace_program, 'AUDIO_RAMP_DEC',
                audio_service.ramp_decrement(audio_settings))
+        tryset(self.trace_program, 'AUDIO_HISTORY_ENABLED',
+               bool(audio_settings.voice_delay))
+        tryset(self.trace_program, 'AUDIO_HISTORY_LEN', MAX_VOICE_DELAY_SAMPLES)
 
         out = []
         remaining = samples
@@ -756,6 +776,8 @@ class StreamlineService:
             tryset(self.trace_program, 'STEPS_PER_DISPATCH', chunk)
             tryset(self.trace_program, 'AUDIO_SLOT_BASE',
                    audio_service.slot_base + audio_service.block_fill)
+            tryset(self.trace_program, 'AUDIO_HISTORY_CURSOR',
+                   audio_service.history_base())
             tryset(self.trace_program, 'DISPATCH_INDEX',
                    (self._dispatch_count * 0x9E3779B9 + issued) & 0xFFFFFFFF)
             # Phase spans this physics interval, and consecutive chunks of the

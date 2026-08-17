@@ -47,6 +47,19 @@ layout(std430, binding = 7) buffer StreamlineAudio {
     float audio_samples[];
 };
 
+// Per-voice delay history. A second, larger ring that nothing reclaims: the
+// lane slots above are recycled as soon as the readback frees them, so they
+// retain only the block or two still in flight and cannot serve a delay of
+// any musical length. Each voice appends here at a monotonically rising
+// cursor, and only wraparound overwrites.
+layout(std430, binding = 9) buffer StreamlineAudioHistory {
+    float audio_history[];
+};
+
+uniform bool AUDIO_HISTORY_ENABLED;  // Off when no voice is delayed
+uniform int AUDIO_HISTORY_LEN;       // Samples per voice; power of two
+uniform int AUDIO_HISTORY_CURSOR;    // Samples written before this dispatch
+
 // The canvas samplers, the physics uniforms and get_can_lerp() all come from
 // entity_physics.glsl, spliced in ahead of this file. Streamers evaluate the
 // same behaviour as real particles rather than a simplified force model, so
@@ -87,6 +100,19 @@ uniform int AUDIO_SLOT_BASE;        // Start index of this block within a lane
 uniform float AUDIO_AMPLITUDE;
 uniform float AUDIO_HP_COEFF;       // One-pole high-pass coefficient
 uniform float AUDIO_RAMP_DEC;       // Per-sample decrement of the reset ramp
+
+// Emit sample k of this dispatch for `voice`, into both the production lane
+// and the delay history. Every audio write goes through here - including the
+// zero-padding a retired particle emits - so the history stays a faithful,
+// gap-free copy of the lane. A gap would surface later as a click when the
+// delayed read reached it.
+void emit_audio(int voice, int lane, int k, float value) {
+    audio_samples[lane + k] = value;
+    if (AUDIO_HISTORY_ENABLED) {
+        int h = (AUDIO_HISTORY_CURSOR + k) & (AUDIO_HISTORY_LEN - 1);
+        audio_history[voice * AUDIO_HISTORY_LEN + h] = value;
+    }
+}
 
 float hash11(float p) {
     p = fract(p * 0.1031);
@@ -199,7 +225,7 @@ void main() {
                     // Let the filter relax toward zero rather than freezing a
                     // DC offset in place.
                     hp_y1 *= AUDIO_HP_COEFF;
-                    audio_samples[lane + k] = hp_y1;
+                    emit_audio(line_id, lane, k, hp_y1);
                 }
                 particles[line_id].hp_y1 = hp_y1;
             }
@@ -246,7 +272,11 @@ void main() {
             // entity space the Fluoddity path uses, so it has its own
             // sampling and boundary handling below.
             vec2 fld = get_can_lerp_square(pos);
-            vel += fld * FORCE_SCALE;
+            //vec3 dp = vec3(1,0);
+            //vec2 fldN = get_can_lerp_square(pos+dp.xy);
+            //vec2 fldS = get_can_lerp_square(pos-dp.xy);
+            vel += fld.yx*vec2(-1,1) * FORCE_SCALE;
+            
 
             // Spring toward the seed, applied after the field so its own
             // damping is not scaled by FORCE_SCALE.
@@ -269,7 +299,7 @@ void main() {
             }
 
             vel *= DAMPING;
-            raw_power = dot(vel, fld);
+            raw_power = dot(vel,fld.yx*vec2(-1,1));//dot(vel, fld);
             pos += vel * STEP_SIZE;
 
             // Square-space bounds, matching the original.
@@ -283,7 +313,7 @@ void main() {
                     if (is_voice) {
                         for (int j = k; j < STEPS_PER_DISPATCH; ++j) {
                             hp_y1 *= AUDIO_HP_COEFF;
-                            audio_samples[lane + j] = hp_y1;
+                            emit_audio(line_id, lane, j, hp_y1);
                         }
                     }
                     break;
@@ -306,7 +336,7 @@ void main() {
                     y *= (1.0 - ramp);
                     ramp = max(0.0, ramp - AUDIO_RAMP_DEC);
                 }
-                audio_samples[lane + k] = y;
+                emit_audio(line_id, lane, k, y);
             }
             continue;
         }
@@ -398,7 +428,7 @@ void main() {
                 if (is_voice) {
                     for (int j = k; j < STEPS_PER_DISPATCH; ++j) {
                         hp_y1 *= AUDIO_HP_COEFF;
-                        audio_samples[lane + j] = hp_y1;
+                        emit_audio(line_id, lane, j, hp_y1);
                     }
                 }
                 break;
@@ -427,7 +457,7 @@ void main() {
                 ramp = max(0.0, ramp - AUDIO_RAMP_DEC);
             }
 
-            audio_samples[lane + k] = y;
+            emit_audio(line_id, lane, k, y);
         }
     }
 

@@ -22,6 +22,13 @@ layout(std430, binding = 8) writeonly buffer StreamlineAudioMix {
     float mix_samples[];
 };
 
+// Per-voice delay history, written by the tracer. Read instead of the lanes
+// whenever a voice is delayed: the lane slots are recycled as soon as the
+// readback frees them, so they hold only the block or two still in flight.
+layout(std430, binding = 9) readonly buffer StreamlineAudioHistory {
+    float audio_history[];
+};
+
 uniform int VOICE_COUNT;      // Lanes to sum
 uniform int LANE_STRIDE;      // Floats per voice lane
 uniform int SLOT_BASE;        // Start of this block within a lane
@@ -37,6 +44,8 @@ uniform bool DELAY_ENABLED;
 uniform int DELAY_MIN;        // Samples, inclusive
 uniform int DELAY_MAX;        // Samples, inclusive. Clamped by the caller to
                               // MAX_VOICE_DELAY_SAMPLES.
+uniform int HISTORY_LEN;      // Samples per voice in the history ring
+uniform int HISTORY_CURSOR;   // Total samples written before this block
 
 uint hash_u32(uint x) {
     x ^= x >> 16;
@@ -68,13 +77,21 @@ void main() {
     }
 
     float acc = 0.0;
-    for (int v = 0; v < VOICE_COUNT; ++v) {
-        // Read backwards into the lane ring and wrap. The caller bounds the
-        // delay so this never reaches a slot the producer has already
-        // overwritten; see MAX_VOICE_DELAY_SAMPLES.
-        int rd = SLOT_BASE + k - voice_delay(v);
-        rd -= LANE_STRIDE * int(floor(float(rd) / float(LANE_STRIDE)));
-        acc += audio_samples[v * LANE_STRIDE + rd];
+
+    if (!DELAY_ENABLED) {
+        // Undelayed: read the lane the tracer just wrote. Keeps the common
+        // case a contiguous read with no history indirection.
+        for (int v = 0; v < VOICE_COUNT; ++v) {
+            acc += audio_samples[v * LANE_STRIDE + SLOT_BASE + k];
+        }
+    } else {
+        // Delayed: read the history ring, which is never reclaimed. The
+        // cursor is where this block STARTS in history, so sample k of it
+        // sits at cursor + k, and the delay steps back from there.
+        for (int v = 0; v < VOICE_COUNT; ++v) {
+            int rd = (HISTORY_CURSOR + k - voice_delay(v)) & (HISTORY_LEN - 1);
+            acc += audio_history[v * HISTORY_LEN + rd];
+        }
     }
 
     mix_samples[SLOT_BASE + k] = acc * MIX_GAIN;
