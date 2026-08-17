@@ -5,7 +5,7 @@ import numpy as np
 from camera import Camera
 from sim import Sim, SIZE_OF_ENTITY_STRUCT
 from ui import UI
-from services import RuleManager, EntityPicker, VideoRecorderService, ConfigSaver, ArrowDebugService, MultiLoadService, StreamlineService, AudioService
+from services import RuleManager, EntityPicker, VideoRecorderService, ConfigSaver, ArrowDebugService, MultiLoadService, StreamlineService, AudioService, SmoothedFieldService
 from services.field_handler import FieldHandler
 from services.parameter_lock_service import ParameterLockService
 from utilities.paths import initialize_user_data, get_user_physics_configs_dir, get_app_physics_configs_dir, get_screenshots_dir
@@ -77,6 +77,8 @@ class App:
         self.arrow_debug_service = ArrowDebugService(self.ctx)
         self.streamline_service = StreamlineService(self.ctx)
         self.audio_service = AudioService(self.ctx)
+        # Time-averaged canvas the tracer can sense instead of the live one.
+        self.smoothed_field = SmoothedFieldService(self.ctx)
         self._streamline_last_time = time.time()  # Tracer's own clock
         # User's own dispatch schedule, held while audio locks the clock.
         self._streamline_sched_backup = None
@@ -114,7 +116,8 @@ class App:
             field_handler=self.field_handler,
             param_lock_service=self.param_lock_service,
             streamline_service=self.streamline_service,
-            audio_service=self.audio_service
+            audio_service=self.audio_service,
+            smoothed_field=self.smoothed_field
         )
         # Xbox controller (FPS camera for shader-driven field)
         self.controller_cam = ControllerCam()
@@ -131,6 +134,9 @@ class App:
         # frame, not just the last of each speedmult batch. Serves both the
         # realtime tracer and the offline capture; see the hook itself.
         self.sim_runner.post_physics_step_hook = self._step_streamlines_with_physics
+        # Advances the smoothed driver field, which the tracer hook above then
+        # senses. Ordered before it for exactly that reason.
+        self.sim_runner.pre_tracer_step_hook = self._advance_smoothed_field
 
         # Frame timing
         self.last_update_time = time.time()
@@ -377,14 +383,15 @@ class App:
                 # going), so nothing stepped the tracer from inside it. Fall
                 # back to the free-running clock, which is also what keeps the
                 # overlay alive over a frozen canvas.
+                field_cur, field_prev = self._tracer_field(ui_state)
                 self.streamline_service.update(
-                    canvas_texture=self.sim.can,
+                    canvas_texture=field_cur,
                     seed_world=seed,
                     settings=streamline,
                     dt=self._streamline_frame_dt,
                     audio_service=self.audio_service,
                     audio_settings=audio,
-                    prev_texture=self._prev_canvas(),
+                    prev_texture=field_prev,
                     samples_per_physics_step=self._samples_per_physics_step(ui_state),
                 )
 
@@ -484,6 +491,24 @@ class App:
             return None
         return other if other is not self.sim.can else None
 
+    def _tracer_field(self, ui_state):
+        """The (current, previous) texture pair the tracer should sense.
+
+        Either the real canvas pair or the smoothed one, depending on the
+        Smoothed Field toggle. The two are interchangeable by construction -
+        same format, same ping-pong discipline - so everything downstream
+        (interpolation, blend phase, the audio tap) is unaffected by which is
+        in use.
+
+        Falls back to the real canvas whenever the smoothed pair is not ready,
+        so a shader failure or a resize in flight degrades to the normal path
+        instead of dropping the tracer.
+        """
+        if (ui_state.streamline.use_smoothed_field
+                and self.smoothed_field.is_ready()):
+            return self.smoothed_field.current, self.smoothed_field.previous
+        return self.sim.can, self._prev_canvas()
+
     def _prepare_streamline_frame(self, ui_state):
         """Settle the tracer's clock and audio stream before the physics runs.
 
@@ -569,6 +594,28 @@ class App:
             return streamline.pinned_seed
         return self._cursor_seed_world(ui_state)
 
+    def _advance_smoothed_field(self, ui_state, step_index, total_steps):
+        """Advance the smoothed driver field by one physics step.
+
+        Runs from SimulationRunner.pre_tracer_step_hook, so the pair is
+        current by the time the tracer samples it. Only runs while the field
+        is actually in use - it is a full-canvas pass per physics step, which
+        at speedmult 25 is 25 of them per frame, and there is no reason to pay
+        that when nothing reads the result.
+        """
+        streamline = ui_state.streamline
+        if not streamline.use_smoothed_field:
+            return
+        if not (streamline.enabled or ui_state.audio.enabled
+                or self.audio_capture is not None):
+            return
+
+        self.smoothed_field.ensure_allocated(self.sim.can.size)
+        self.smoothed_field.update(self.sim.can, streamline.smooth_amount)
+        # The EMA pass binds its own framebuffer; hand the target back so the
+        # physics loop and the frame assembly that follow are unaffected.
+        self.ctx.screen.use()
+
     def _step_streamlines_with_physics(self, ui_state, step_index, total_steps):
         """Advance the tracer inside one physics step.
 
@@ -615,14 +662,15 @@ class App:
             owed = rate * self._streamline_frame_dt / max(1, total_steps)
 
         self._streamline_stepped_this_frame = True
+        field_cur, field_prev = self._tracer_field(ui_state)
         self.streamline_service.update_for_physics_step(
-            canvas_texture=self.sim.can,
+            canvas_texture=field_cur,
             seed_world=self._streamline_seed(ui_state),
             settings=streamline,
             steps_owed=owed,
             audio_service=self.audio_service,
             audio_settings=audio,
-            prev_texture=self._prev_canvas(),
+            prev_texture=field_prev,
         )
 
     def _samples_per_physics_step(self, ui_state) -> float:
@@ -719,11 +767,12 @@ class App:
         if samples <= 0:
             return
 
+        field_cur, field_prev = self._tracer_field(ui_state)
         for block in self.streamline_service.render_audio_samples(
-                self.sim.can, self._streamline_seed(ui_state),
+                field_cur, self._streamline_seed(ui_state),
                 ui_state.streamline,
                 self.audio_service, ui_state.audio, samples,
-                prev_texture=self._prev_canvas()):
+                prev_texture=field_prev):
             cap.add_samples(block)
 
     def _finish_audio_capture(self):
@@ -760,6 +809,7 @@ class App:
         self.advanced_drawing_processor.cleanup()
         self.audio_service.cleanup()
         self.streamline_service.cleanup()
+        self.smoothed_field.cleanup()
         self.video_service.cleanup()
         self.ui.cleanup()
         glfw.terminate()

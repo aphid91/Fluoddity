@@ -7,5 +7,6 @@ from .multi_load_service import MultiLoadService
 from .field_handler import FieldHandler
 from .streamline_service import StreamlineService
 from .audio_service import AudioService
+from .smoothed_field import SmoothedFieldService
 
-__all__ = ['RuleManager', 'EntityPicker', 'VideoRecorderService', 'ConfigSaver', 'ArrowDebugService', 'MultiLoadService', 'FieldHandler', 'StreamlineService', 'AudioService']
+__all__ = ['RuleManager', 'EntityPicker', 'VideoRecorderService', 'ConfigSaver', 'ArrowDebugService', 'MultiLoadService', 'FieldHandler', 'StreamlineService', 'AudioService', 'SmoothedFieldService']

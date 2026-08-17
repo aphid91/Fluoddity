@@ -26,6 +26,11 @@ class SimulationRunner:
         # whole speedmult batch, or it skips speedmult-1 frames out of every
         # speedmult.
         self.post_physics_step_hook = None
+        # Optional callback(ui_state, step_index, total_steps) run after each
+        # physics step but BEFORE post_physics_step_hook. For state that the
+        # tracer then senses - the smoothed driver field - and so must already
+        # describe this interval by the time the tracer runs.
+        self.pre_tracer_step_hook = None
         self.command_handler = command_handler
         self.window = window
         self.advanced_drawing_processor = advanced_drawing_processor
@@ -300,6 +305,17 @@ class SimulationRunner:
         # Check for deferred entity selection only on first physics step
         if step_index == 0 and self.command_handler.has_pending_entity_selection:
             self.command_handler.try_complete_entity_selection(ui_state)
+
+        # Advance the smoothed driver field before the tracer observes it, so
+        # its pair describes the same interval the canvas pair does. Running
+        # it after the hook would hand the tracer a field one step stale, and
+        # the two pairs would interpolate across different intervals.
+        #
+        # Being here also gives the freeze-on-pause behaviour for free: no
+        # physics step means no update, so a paused simulation leaves the
+        # field exactly where it was.
+        if self.pre_tracer_step_hook is not None:
+            self.pre_tracer_step_hook(ui_state, step_index, total_steps)
 
         # Let observers that need every physics frame run now, while this
         # step's canvas is still the newest of the two ping-pong textures.

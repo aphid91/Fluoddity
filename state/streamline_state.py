@@ -50,6 +50,21 @@ class StreamlineState:
     # this off is the fastest way to tell.
     field_interpolation: bool = True
 
+    # --- Smoothed driver field ---
+    # Drive the streamers (and therefore the audio) from a time-averaged copy
+    # of the canvas instead of the canvas itself. The canvas has structures
+    # worth resonating in, but enough temporal noise that a tone only settles
+    # when the simulation is paused; smoothing keeps those structures alive
+    # long enough to ring while the field still evolves.
+    use_smoothed_field: bool = False
+    # Blend weight applied once per PHYSICS STEP:
+    #   smoothed = mix(smoothed, canvas, amount)
+    # 1.0 is the unsmoothed canvas. Because it is per step rather than per
+    # second, the effective time constant moves with speedmult and the physics
+    # rate - the UI shows the resulting constant in ms so the coupling is at
+    # least visible.
+    smooth_amount: float = 0.05
+
     # --- Scheduling (independent of both render and physics cadence) ---
     dispatch_hz: float = 60.0  # Target tracer dispatches per second
     steps_per_dispatch: int = 8  # Integration steps advanced per dispatch

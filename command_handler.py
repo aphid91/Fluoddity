@@ -14,7 +14,8 @@ class CommandHandler:
     def __init__(self, sim, camera, ui, rule_manager, entity_picker,
                  video_service, config_saver, multi_load_service, user_configs_dir,
                  field_handler=None, param_lock_service=None,
-                 streamline_service=None, audio_service=None):
+                 streamline_service=None, audio_service=None,
+                 smoothed_field=None):
         self.sim = sim
         self.camera = camera
         self.ui = ui
@@ -28,6 +29,7 @@ class CommandHandler:
         self.param_lock_service = param_lock_service
         self.streamline_service = streamline_service
         self.audio_service = audio_service
+        self.smoothed_field = smoothed_field
 
         # Preview state
         self.preview_rule_active = False  # File->load preview
@@ -116,10 +118,17 @@ class CommandHandler:
                 self.streamline_service.reload()
             if self.audio_service:
                 self.audio_service.reload()
+            if self.smoothed_field:
+                self.smoothed_field.reload()
 
         # Simple reset (R key)
         if ui_state.request_reset:
             self.sim.reset()
+            # The averaged history describes a canvas that no longer exists,
+            # so reseed from the new one rather than blending across the
+            # discontinuity.
+            if self.smoothed_field:
+                self.smoothed_field.request_seed()
 
         # Full reset (Z key)
         if ui_state.request_full_reset:
@@ -200,6 +209,8 @@ class CommandHandler:
     def _handle_full_reset(self, ui_state):
         """Handle full reset (Z key): reset entities, apply zero rule, randomize, push new state."""
         self.sim.reset()
+        if self.smoothed_field:
+            self.smoothed_field.request_seed()
         zero_rule = np.zeros((10, 8), dtype=np.float32)
         self.sim.apply_rule(zero_rule)
         ui_state.sim.rule_seed = random.random()

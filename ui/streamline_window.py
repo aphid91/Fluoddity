@@ -102,6 +102,47 @@ class StreamlineWindowMixin:
             if not s.field_interpolation:
                 imgui.text_disabled("  field steps at the physics rate")
 
+            _, s.use_smoothed_field = imgui.checkbox(
+                "Smoothed Field", s.use_smoothed_field
+            )
+            self._delayed_tooltip(
+                "Drive the streamers - and therefore the audio - from a\n"
+                "time-averaged copy of the canvas instead of the canvas\n"
+                "itself.\n\n"
+                "The canvas has structures worth resonating in, but enough\n"
+                "temporal noise that a tone only really settles when the\n"
+                "simulation is paused. Smoothing keeps those structures alive\n"
+                "long enough to ring while the field still evolves."
+            )
+
+            if s.use_smoothed_field:
+                _, s.smooth_amount = imgui.slider_float(
+                    "Smooth Amount", s.smooth_amount, 0.001, 1.0,
+                    format="%.4f", flags=imgui.SliderFlags_.logarithmic
+                )
+                self._delayed_tooltip(
+                    "Blend weight applied once per physics step:\n"
+                    "  smoothed = mix(smoothed, canvas, amount)\n\n"
+                    "1.0 is the unsmoothed canvas. Smaller is smoother and\n"
+                    "slower to follow."
+                )
+
+                # The blend is per physics STEP, so the time constant moves
+                # with speedmult and the physics rate. Showing it in ms keeps
+                # that coupling visible instead of leaving the slider feeling
+                # like it changes meaning on its own.
+                amt = max(1e-6, min(1.0, s.smooth_amount))
+                steps = 1.0 / amt
+                speedmult = max(1, int(self.state.preferences.speedmult))
+                steps_per_sec = speedmult * 60.0  # Physics steps at 60fps
+                imgui.text_disabled(
+                    f"  ~{steps:,.0f} steps to settle "
+                    f"(~{steps / steps_per_sec * 1000.0:,.0f} ms "
+                    f"at speedmult {speedmult})"
+                )
+                if not self.state.sim.going:
+                    imgui.text_disabled("  frozen while the sim is paused")
+
             imgui.separator()
 
             # === Integration ===
