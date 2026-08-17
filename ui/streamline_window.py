@@ -166,7 +166,13 @@ class StreamlineWindowMixin:
 
             # === Population ===
             imgui.text("Population")
-            _, s.count = imgui.slider_int("Count", s.count, 1, MAX_STREAMLINES)
+            # Logarithmic: the useful range spans three decades now that the
+            # cap is 8192, and a linear slider makes the low hundreds - where
+            # most configs live - nearly impossible to land on.
+            _, s.count = imgui.slider_int(
+                "Count", s.count, 1, MAX_STREAMLINES,
+                flags=imgui.SliderFlags_.logarithmic
+            )
             self._delayed_tooltip(
                 "Number of particles. Changing this re-seeds them all."
             )

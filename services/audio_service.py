@@ -150,7 +150,7 @@ class AudioService:
             self.sync = GLSync()
         if self.buffer is None:
             # One lane of (AUDIO_SLOTS * AUDIO_BLOCK) floats per possible
-            # voice. 1024 * 16 * 512 * 4B = 33.6 MB.
+            # voice. 8192 * 16 * 512 * 4B = 268 MB.
             self.buffer = self.ctx.buffer(
                 np.zeros(MAX_STREAMLINES * self.lane_stride, dtype="f4").tobytes()
             )

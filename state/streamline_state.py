@@ -7,11 +7,16 @@ from .audio_state import TRANSIENT
 # runtime. Lives here rather than in the service so the UI can bound its
 # sliders without importing from services/ (which would add an edge to the
 # ui/services cycle).
-MAX_STEPS = 16384
+MAX_STEPS = 4096
 
 # Upper bound on simultaneous particles. The path buffer holds
-# MAX_STREAMLINES slices of MAX_STEPS vec2 -> 1024 * 16384 * 8B = 134 MB.
-MAX_STREAMLINES = 1024
+# MAX_STREAMLINES slices of MAX_STEPS vec2 -> 8192 * 4096 * 8B = 268 MB.
+#
+# MAX_STEPS was cut from 16384 when this rose from 1024: the path buffer is
+# allocated eagerly at the maximum, so 8192 particles at the old ring depth
+# would have reserved 1.07 GB of VRAM at startup whether or not the count was
+# ever turned up. 4096 ring entries is still 8x the default tail_length.
+MAX_STREAMLINES = 8192
 
 # Safety cap on catch-up dispatches per rendered frame. Without this, a hitch
 # (or a paused debugger) would queue an unbounded burst of GPU work on resume.
