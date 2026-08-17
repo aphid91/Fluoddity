@@ -30,6 +30,21 @@ MAX_DISPATCHES_PER_FRAME = 64
 # and audio needs ~1.6 blocks per 60fps frame, so this has to allow ~25.
 AUDIO_MAX_DISPATCHES_PER_FRAME = 48
 
+# Most integration steps one physics interval may produce before the request
+# is treated as hitch backlog and dropped.
+#
+# This is NOT one audio block. At speedmult 1 a single interval carries the
+# whole frame's budget, and because that budget is quantised to whole blocks
+# (1.5625 blocks/frame at 48kHz/60fps, so it alternates 1 and 2) an interval
+# is routinely worth 1024 samples. Capping at 512 there threw away half a
+# block every other frame - a 36% shortfall, and the audible hiccup at
+# speedmult 1 specifically.
+#
+# 4096 is ~85 ms of audio: comfortably more than any honest interval (a 2-block
+# frame at 15fps still only owes ~3200), while still bounding a resume-from-
+# pause burst to something that will not lock the GPU for a visible beat.
+MAX_STEPS_PER_INTERVAL = 4096
+
 
 @dataclass
 class StreamlineState:

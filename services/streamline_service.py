@@ -17,7 +17,7 @@ import numpy as np
 from utilities.gl_helpers import read_shader, tryset, shader_prepend
 from state.streamline_state import (
     MAX_STEPS, MAX_STREAMLINES, MAX_DISPATCHES_PER_FRAME,
-    AUDIO_MAX_DISPATCHES_PER_FRAME,
+    AUDIO_MAX_DISPATCHES_PER_FRAME, MAX_STEPS_PER_INTERVAL,
 )
 from state.audio_state import (AUDIO_BLOCK, AUDIO_SLOTS, MAX_VOICES,
                                MAX_VOICE_DELAY_SAMPLES)
@@ -354,11 +354,24 @@ class StreamlineService:
             # the long-run rate stays exact rather than being floored away.
             # Happens once the physics rate approaches the sample rate.
             return 0
-        # Cap the catch-up after a hitch. One audio block is already several
-        # physics intervals' worth of work, so anything beyond that is backlog
-        # worth dropping rather than replaying against a stale field.
-        if n_steps > AUDIO_BLOCK:
-            n_steps = AUDIO_BLOCK
+        # Cap the catch-up after a hitch, but only for genuine backlog.
+        #
+        # One physics interval can legitimately owe more than a block: the
+        # frame budget is whole blocks (blocks_wanted alternates 1 and 2 for
+        # the 1.5625 blocks/frame a 48kHz stream needs at 60fps), and at
+        # speedmult 1 that entire budget lands on a single interval - so
+        # `owed` alternates 512 and 1024. Capping at AUDIO_BLOCK there
+        # discarded half a block every other frame, a 36% shortfall that
+        # starved the ring. Above speedmult 1 the budget is divided across
+        # intervals first, never exceeds 512, and the cap never fired - which
+        # is why this only ever went wrong at speedmult 1.
+        #
+        # So the ceiling is what one interval can honestly be worth, not one
+        # block. Anything past that really is a hitch backlog and is dropped
+        # rather than replayed against a stale field.
+        max_steps = MAX_STEPS_PER_INTERVAL
+        if n_steps > max_steps:
+            n_steps = max_steps
             self._step_debt = 0.0
         else:
             self._step_debt -= n_steps
