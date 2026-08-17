@@ -272,9 +272,6 @@ void main() {
             // entity space the Fluoddity path uses, so it has its own
             // sampling and boundary handling below.
             vec2 fld = get_can_lerp_square(pos);
-            //vec3 dp = vec3(1,0);
-            //vec2 fldN = get_can_lerp_square(pos+dp.xy);
-            //vec2 fldS = get_can_lerp_square(pos-dp.xy);
             vel += fld.yx*vec2(-1,1) * FORCE_SCALE;
             
 
