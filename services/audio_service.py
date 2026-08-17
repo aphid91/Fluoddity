@@ -16,8 +16,8 @@ import sys
 
 import numpy as np
 
-from state.audio_state import AUDIO_BLOCK, AUDIO_SLOTS, AUDIO_RB_BLOCKS
-from state.streamline_state import MAX_STREAMLINES
+from state.audio_state import (AUDIO_BLOCK, AUDIO_SLOTS, AUDIO_RB_BLOCKS,
+                               MAX_VOICES, MAX_VOICE_DELAY_SAMPLES)
 from utilities.gl_helpers import read_shader, tryset
 
 # GL sync constants. moderngl wraps none of these, so they come from the
@@ -150,9 +150,9 @@ class AudioService:
             self.sync = GLSync()
         if self.buffer is None:
             # One lane of (AUDIO_SLOTS * AUDIO_BLOCK) floats per possible
-            # voice. 8192 * 16 * 512 * 4B = 268 MB.
+            # voice. 1024 * 32 * 512 * 4B = 67 MB.
             self.buffer = self.ctx.buffer(
-                np.zeros(MAX_STREAMLINES * self.lane_stride, dtype="f4").tobytes()
+                np.zeros(MAX_VOICES * self.lane_stride, dtype="f4").tobytes()
             )
         if self.mix_buffer is None:
             self.mix_buffer = self.ctx.buffer(
@@ -226,6 +226,9 @@ class AudioService:
             # Any fence still held from a previous run has to be deleted, not
             # dropped on the floor by reassigning the list.
             self._release_fences()
+            # Stale lane contents are audible through the delay, which reads
+            # back further than this run has written.
+            self.clear_lanes()
             self.w = self.r = 0
             self.block_fill = 0
             self.starves = 0
@@ -253,6 +256,21 @@ class AudioService:
         self._release_fences()
         self.w = self.r = 0
         self.block_fill = 0
+
+    def clear_lanes(self):
+        """Zero the voice lanes and the mix buffer.
+
+        The delay reads backwards into lanes the tracer has not written yet at
+        startup, so without this the first delay-length of a stream is
+        whatever the buffer happened to hold - silence on a fresh allocation,
+        but audio from the previous run on any restart, and on the offline
+        path (which rewinds w/r to 0) audio from the previous render.
+        """
+        if self.buffer is None:
+            return
+        self.buffer.clear()
+        if self.mix_buffer is not None:
+            self.mix_buffer.clear()
 
     def _release_fences(self):
         """Delete every outstanding fence.
@@ -300,12 +318,33 @@ class AudioService:
             return
         n = max(1, int(voice_count))
         gain = 1.0 / math.sqrt(n) if settings.rms_normalise else 1.0
+        lo, hi = self.delay_bounds(settings)
         tryset(self.mix_program, 'VOICE_COUNT', n)
         tryset(self.mix_program, 'LANE_STRIDE', self.lane_stride)
         tryset(self.mix_program, 'SLOT_BASE', self.slot_base)
         tryset(self.mix_program, 'BLOCK_SIZE', AUDIO_BLOCK)
         tryset(self.mix_program, 'MIX_GAIN', float(gain))
+        tryset(self.mix_program, 'DELAY_ENABLED', bool(settings.voice_delay))
+        tryset(self.mix_program, 'DELAY_MIN', lo)
+        tryset(self.mix_program, 'DELAY_MAX', hi)
         self.mix_program.run((AUDIO_BLOCK + 63) // 64, 1, 1)
+
+    def delay_bounds(self, settings) -> tuple:
+        """Per-voice delay range in samples, clamped to what the ring holds.
+
+        Beyond MAX_VOICE_DELAY_SAMPLES the mix would read lane slots a newer
+        dispatch has already overwritten, so the request is clamped rather
+        than honoured - a shorter delay than asked for is a much better
+        failure than torn audio.
+        """
+        sr = float(settings.sample_rate)
+        lo = int(max(0.0, settings.delay_min_ms) * 0.001 * sr)
+        hi = int(max(0.0, settings.delay_max_ms) * 0.001 * sr)
+        if hi < lo:
+            lo, hi = hi, lo
+        hi = min(hi, MAX_VOICE_DELAY_SAMPLES)
+        lo = min(lo, hi)
+        return lo, hi
 
     def advance_fill(self, samples: int) -> bool:
         """Record `samples` written into the block in flight.
@@ -495,6 +534,9 @@ class AudioService:
         """Reset conditioning state before an offline render."""
         self._ensure_gpu()
         self._envelope = 1.0
+        # w/r rewind to 0, so the delay's backwards read would land at the far
+        # end of the lane - the tail of the PREVIOUS render. Clear it.
+        self.clear_lanes()
         # The offline path fills blocks across several physics steps, so it
         # uses the same slot cursor and partial-fill counter the realtime path
         # does. A leftover fill from a previous render would offset every

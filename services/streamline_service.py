@@ -19,7 +19,7 @@ from state.streamline_state import (
     MAX_STEPS, MAX_STREAMLINES, MAX_DISPATCHES_PER_FRAME,
     AUDIO_MAX_DISPATCHES_PER_FRAME,
 )
-from state.audio_state import AUDIO_BLOCK, AUDIO_SLOTS
+from state.audio_state import AUDIO_BLOCK, AUDIO_SLOTS, MAX_VOICES
 
 # SSBO binding points. 0/2/3/4 are claimed by sim.py's entity and rule buffers.
 PATH_BINDING = 5
@@ -399,7 +399,7 @@ class StreamlineService:
         # is 80 samples of a 512-sample block), so a block spans several
         # intervals and is completed by whichever interval fills it.
         audio_service.bind()
-        voice_count = int(min(max(audio_settings.voice_count, 1), count))
+        voice_count = int(min(max(audio_settings.voice_count, 1), count, MAX_VOICES))
         tryset(self.trace_program, 'AUDIO_VOICE_COUNT', voice_count)
         tryset(self.trace_program, 'AUDIO_LANE_STRIDE', audio_service.lane_stride)
         tryset(self.trace_program, 'AUDIO_AMPLITUDE',
@@ -569,7 +569,7 @@ class StreamlineService:
         tryset(self.trace_program, 'AUDIO_ENABLED', bool(audio_on))
         if audio_on:
             audio_service.bind()
-            voice_count = int(min(max(audio_settings.voice_count, 1), count))
+            voice_count = int(min(max(audio_settings.voice_count, 1), count, MAX_VOICES))
             tryset(self.trace_program, 'AUDIO_VOICE_COUNT', voice_count)
             tryset(self.trace_program, 'AUDIO_LANE_STRIDE',
                    audio_service.lane_stride)
@@ -722,7 +722,7 @@ class StreamlineService:
             settings.request_reset = False
             self._reset(seed_world, settings, count)
 
-        voice_count = int(min(max(audio_settings.voice_count, 1), count))
+        voice_count = int(min(max(audio_settings.voice_count, 1), count, MAX_VOICES))
         groups = (count + LOCAL_SIZE - 1) // LOCAL_SIZE
 
         # Interpolation is exact here for the same reason it is in realtime:

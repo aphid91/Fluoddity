@@ -28,6 +28,39 @@ uniform int SLOT_BASE;        // Start of this block within a lane
 uniform int BLOCK_SIZE;       // Samples in this block
 uniform float MIX_GAIN;       // Usually 1/sqrt(VOICE_COUNT)
 
+// --- Per-voice delay ---
+// Each voice is read a fixed distance in the past, so the voices smear
+// against each other instead of landing together. The distance is hashed
+// from the voice index rather than stored: a table would need an SSBO to
+// reach 8192 voices, and the hash is just as deterministic.
+uniform bool DELAY_ENABLED;
+uniform int DELAY_MIN;        // Samples, inclusive
+uniform int DELAY_MAX;        // Samples, inclusive. Clamped by the caller to
+                              // MAX_VOICE_DELAY_SAMPLES.
+
+uint hash_u32(uint x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+// Delay for voice v, in samples. Stable for the life of the stream: it
+// depends only on the voice index, so a voice does not change pitch by
+// having its delay drift under it.
+int voice_delay(int v) {
+    if (!DELAY_ENABLED || DELAY_MAX <= 0) {
+        return 0;
+    }
+    int span = DELAY_MAX - DELAY_MIN;
+    if (span <= 0) {
+        return DELAY_MIN;
+    }
+    return DELAY_MIN + int(hash_u32(uint(v) * 0x9e3779b9u) % uint(span + 1));
+}
+
 void main() {
     int k = int(gl_GlobalInvocationID.x);
     if (k >= BLOCK_SIZE) {
@@ -36,7 +69,12 @@ void main() {
 
     float acc = 0.0;
     for (int v = 0; v < VOICE_COUNT; ++v) {
-        acc += audio_samples[v * LANE_STRIDE + SLOT_BASE + k];
+        // Read backwards into the lane ring and wrap. The caller bounds the
+        // delay so this never reaches a slot the producer has already
+        // overwritten; see MAX_VOICE_DELAY_SAMPLES.
+        int rd = SLOT_BASE + k - voice_delay(v);
+        rd -= LANE_STRIDE * int(floor(float(rd) / float(LANE_STRIDE)));
+        acc += audio_samples[v * LANE_STRIDE + rd];
     }
 
     mix_samples[SLOT_BASE + k] = acc * MIX_GAIN;

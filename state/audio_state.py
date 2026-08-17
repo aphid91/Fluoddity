@@ -15,10 +15,35 @@ AUDIO_BLOCK = 512
 # frame's readback runs. At 48kHz/512 the stream needs 93.75 blocks/s, i.e.
 # ~1.6 per 60fps frame; with only a handful of slots the pipeline stalls at
 # ~1 block/frame and the audio runs slower than realtime.
-AUDIO_SLOTS = 16
+#
+# Raised from 16 to 32 for the per-voice delay: the mix reads BACKWARDS into
+# the lane ring, so the delay can only reach as far as the ring retains. See
+# MAX_VOICE_DELAY_SAMPLES.
+AUDIO_SLOTS = 32
 
 # CPU-side ring depth, in blocks. Must make the frame count a power of two.
 AUDIO_RB_BLOCKS = 16
+
+# Upper bound on simultaneous voices, independent of MAX_STREAMLINES.
+#
+# The lane buffer is MAX_VOICES * AUDIO_SLOTS * AUDIO_BLOCK floats, so sizing
+# it for all 8192 particles would reserve 537 MB for voices the mix shader
+# cannot sum in realtime anyway - its inner loop is serial over voices, so it
+# falls behind long before 8192. 1024 lanes cost 67 MB and are already more
+# than the reduction keeps up with.
+MAX_VOICES = 1024
+
+# Furthest back the mix may read into a voice lane, in samples.
+#
+# The delay is a backwards read into the same ring the tracer is writing
+# forward into, so it can only reach samples the ring still holds. Two slots
+# are unavailable: the one being written, and the spare can_dispatch() keeps
+# free so a dispatch never lands on a block that has not been read back. What
+# is left is the safe lookback - anything beyond it reads samples that a newer
+# dispatch has already overwritten, which is torn audio rather than delay.
+#
+# At 32 slots x 512 that is 15360 samples, 320 ms at 48 kHz.
+MAX_VOICE_DELAY_SAMPLES = (AUDIO_SLOTS - 2) * AUDIO_BLOCK
 
 
 @dataclass
@@ -47,6 +72,19 @@ class AudioState:
     # 1/sqrt(n) is RMS-preserving for near-independent voices, so the level
     # holds steady as voice_count changes. 1/n would fade toward silence.
     rms_normalise: bool = True
+
+    # --- Per-voice delay ---
+    # Each voice reads its lane a fixed distance in the past, the distance
+    # drawn per-voice from [delay_min_ms, delay_max_ms] by a hash of the voice
+    # index. Derived in the shader rather than stored, so it costs nothing at
+    # 8192 voices and stays identical run to run.
+    #
+    # Note this is a smearing/chorus effect more than a decorrelator: the
+    # voices were measured near-independent already (|corr| ~0.015 mean), so
+    # there is little correlation for it to remove.
+    voice_delay: bool = False
+    delay_min_ms: float = 100.0
+    delay_max_ms: float = 200.0
 
     amplitude: float = 0.3  # Output gain applied to dot(vel, field)
     # dot(velocity, field) is unnormalised: velocity accumulates force every

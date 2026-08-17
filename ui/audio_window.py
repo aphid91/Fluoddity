@@ -1,7 +1,7 @@
 """Audio window: streamline-driven voice settings and pipeline telemetry."""
 from imgui_bundle import imgui
-from state.audio_state import AUDIO_BLOCK, AUDIO_SLOTS, AUDIO_RB_BLOCKS
-from state.streamline_state import MAX_STREAMLINES
+from state.audio_state import (AUDIO_BLOCK, AUDIO_SLOTS, AUDIO_RB_BLOCKS,
+                               MAX_VOICES, MAX_VOICE_DELAY_SAMPLES)
 
 
 class AudioWindowMixin:
@@ -32,19 +32,22 @@ class AudioWindowMixin:
             imgui.separator()
 
             # === Voices ===
-            max_voices = max(1, min(s.count, MAX_STREAMLINES))
+            # MAX_VOICES, not MAX_STREAMLINES: the lane buffer is sized for
+            # voices, and the mix reduction is serial over them.
+            max_voices = max(1, min(s.count, MAX_VOICES))
             _, a.voice_count = imgui.slider_int(
                 "Voice Count", a.voice_count, 1, max_voices,
                 flags=imgui.SliderFlags_.logarithmic
             )
             self._delayed_tooltip(
-                "How many particles contribute to the mix (the first N).\n"
-                "Independent of the streamline count: sonifying a whole\n"
-                "1024-particle swarm is mostly wash, and the reduction\n"
-                "cost scales with this."
+                f"How many particles contribute to the mix (the first N).\n"
+                f"Independent of the streamline count: sonifying a whole\n"
+                f"swarm is mostly wash, and the mix reduction is serial\n"
+                f"over voices, so it falls behind well before the cap of\n"
+                f"{MAX_VOICES}."
             )
-            if a.voice_count > s.count:
-                imgui.text_disabled(f"  clamped to {s.count} particles")
+            if a.voice_count > max_voices:
+                imgui.text_disabled(f"  clamped to {max_voices}")
 
             _, a.rms_normalise = imgui.checkbox(
                 "RMS Normalise", a.rms_normalise
@@ -55,6 +58,37 @@ class AudioWindowMixin:
                 "(measured correlation ~0.015), so their energy adds as\n"
                 "sqrt(n); dividing by n instead would fade toward silence."
             )
+
+            # The ring bounds the delay in SAMPLES, so the millisecond ceiling
+            # moves with the sample rate.
+            max_delay_ms = MAX_VOICE_DELAY_SAMPLES / max(1, a.sample_rate) * 1000.0
+
+            _, a.voice_delay = imgui.checkbox("Voice Delay", a.voice_delay)
+            self._delayed_tooltip(
+                "Read each voice a different distance in the past, so they\n"
+                "smear against each other instead of landing together.\n"
+                "The distance is hashed from the voice index, so it is\n"
+                "stable for the life of the stream.\n\n"
+                "Expect chorus/smear rather than decorrelation: the voices\n"
+                "were already near-independent before this."
+            )
+            if a.voice_delay:
+                _, a.delay_min_ms = imgui.slider_float(
+                    "Delay Min", a.delay_min_ms, 0.0, max_delay_ms,
+                    format="%.0f ms"
+                )
+                _, a.delay_max_ms = imgui.slider_float(
+                    "Delay Max", a.delay_max_ms, 0.0, max_delay_ms,
+                    format="%.0f ms"
+                )
+                self._delayed_tooltip(
+                    f"Delays are drawn from this range. Capped at "
+                    f"{max_delay_ms:.0f} ms by the\n"
+                    f"depth of the GPU lane ring "
+                    f"({MAX_VOICE_DELAY_SAMPLES:,} samples)."
+                )
+                if a.delay_max_ms < a.delay_min_ms:
+                    imgui.text_disabled("  min/max swapped")
 
             _, a.amplitude = imgui.slider_float(
                 "Amplitude", a.amplitude, 0.0, 4.0, format="%.3f"
